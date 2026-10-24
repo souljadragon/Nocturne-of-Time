@@ -57,6 +57,8 @@
 
 cmake_minimum_required (VERSION 3.12)
 
+option(AUTOMATE_VCPKG_AUTO_UPDATE "git pull the bundled vcpkg on every configure" OFF)
+
 if(WIN32)
     set(VCPKG_FALLBACK_ROOT ${CMAKE_CURRENT_BINARY_DIR}/vcpkg CACHE STRING "vcpkg configuration directory to use if vcpkg was not installed on the system before")
 else()
@@ -117,10 +119,15 @@ macro(_install_or_update_vcpkg)
         # If a reproducible build is desired (and potentially old libraries are # ok), uncomment the
         # following line and pin the vcpkg repository to a specific githash.
         # execute_process(COMMAND git checkout 745a0aea597771a580d0b0f4886ea1e3a94dbca6 WORKING_DIRECTORY ${VCPKG_ROOT})
-    else()
+    elseif(AUTOMATE_VCPKG_AUTO_UPDATE)
         # The following command has no effect if the vcpkg repository is in a detached head state.
         message(STATUS "Auto-updating vcpkg in ${VCPKG_ROOT}")
         execute_process(COMMAND git pull WORKING_DIRECTORY ${VCPKG_ROOT})
+    else()
+        # Nocturne of Time: don't pull a newer vcpkg on every reconfigure. A pull can change
+        # port versions, which makes vcpkg rebuild (and sometimes lose) packages such as SDL2
+        # when CMake re-runs from inside a build. Pass -DAUTOMATE_VCPKG_AUTO_UPDATE=ON to update.
+        message(STATUS "Using existing vcpkg in ${VCPKG_ROOT} (auto-update off)")
     endif()
 
     if(NOT EXISTS ${VCPKG_ROOT}/README.md)
