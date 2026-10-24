@@ -611,6 +611,16 @@ add_custom_command(
     COMMENT "Copying asset ymls..."
     COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/soh/assets/yml $<TARGET_FILE_DIR:soh>/assets
 )
+# Nocturne of Time: on Windows the exe lands in a different folder than soh.o2r,
+# so copy the archive next to the exe after every build.
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_custom_command(
+        TARGET ${PROJECT_NAME}
+        POST_BUILD
+        COMMENT "Copying soh.o2r next to the executable..."
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/soh/soh.o2r $<TARGET_FILE_DIR:soh>/soh.o2r
+    )
+endif()
 ################################################################################
 # Dependencies
 ################################################################################
@@ -618,6 +628,9 @@ add_dependencies(${PROJECT_NAME}
     libultraship
     torch
 )
+if (TARGET GenerateSohOtr)
+    add_dependencies(${PROJECT_NAME} GenerateSohOtr)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     find_package(glfw3 REQUIRED)
