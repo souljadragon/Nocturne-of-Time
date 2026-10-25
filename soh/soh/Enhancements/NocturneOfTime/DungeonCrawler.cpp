@@ -45,6 +45,10 @@ constexpr f32 kEyeHeightChild = 40.0f;
 constexpr f32 kFov = 70.0f;
 constexpr s16 kMaxPitch = 0x1C00; // about 40 degrees
 constexpr f32 kPi = 3.14159265f;
+constexpr f32 kMinApproach = 8.0f;     // shortest partial step worth taking toward an obstacle
+constexpr f32 kChestFrontDist = 30.0f; // where Link stands in front of a chest (it opens from 0-50 units, centred)
+constexpr f32 kDropAssist = 60.0f;     // drops deeper than this are walked off by the game (ladder tops, jumps)
+constexpr s16 kAssistFrames = 15;      // longest the game drives Link during an assist
 
 // Flags that mean Link is doing something the crawler must not interfere with.
 constexpr u32 kBusyFlags1 = PLAYER_STATE1_LOADING | PLAYER_STATE1_SWINGING_BOTTLE | PLAYER_STATE1_HOOKSHOT_FALLING |
@@ -59,7 +63,9 @@ constexpr u32 kBusyFlags2 = PLAYER_STATE2_CRAWLING;
 // While airborne the crawler keeps the view but won't start new moves.
 constexpr u32 kAirborneFlags1 = PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL;
 
-enum class Action { None, Step, Turn, Bump };
+// Assist: for a few frames the game itself walks Link forward, so vanilla behaviour that needs real
+// movement can start (grabbing vines/ladders, climbing down from a ladder top, walking off a ledge).
+enum class Action { None, Step, Turn, Bump, Assist };
 
 struct CrawlerState {
     bool active = false; // the crawler owns Link and the camera this frame
@@ -71,6 +77,8 @@ struct CrawlerState {
     Vec3f gridOrigin = { 0.0f, 0.0f, 0.0f };
     Vec3f from = { 0.0f, 0.0f, 0.0f };
     Vec3f to = { 0.0f, 0.0f, 0.0f };
+    s16 stepYawFrom = 0; // a step can also swing the view (e.g. to face a chest)
+    s16 stepYawTo = 0;
     s16 yawFrom = 0;
     s16 yawTo = 0;
     Vec3f bumpDir = { 0.0f, 0.0f, 0.0f };
@@ -113,28 +121,50 @@ Vec3f SnapToGrid(const Vec3f& pos) {
     return out;
 }
 
-bool CanStep(PlayState* play, const Vec3f& from, const Vec3f& to, const Vec3f& dir) {
-    CollisionPoly* poly;
-    s32 bgId;
-    Vec3f hit;
+struct WallHit {
+    bool hit = false;
+    f32 dist = 0.0f; // along the step direction
+    CollisionPoly* poly = NULL;
+    s32 bgId = BGCHECK_SCENE;
+};
 
-    // Walls: test at knee and chest height, a little past the tile so Link stops short of the wall
+// Nearest wall (scene or actor collision) along dir within length, tested at knee and chest height.
+WallHit ProbeWalls(PlayState* play, const Vec3f& from, const Vec3f& dir, f32 length) {
     static const f32 kProbeHeights[] = { 20.0f, 45.0f };
+    WallHit best;
+    best.dist = length;
+
     for (f32 h : kProbeHeights) {
         Vec3f a = { from.x, from.y + h, from.z };
-        Vec3f b = { to.x + dir.x * kWallClearance, from.y + h, to.z + dir.z * kWallClearance };
-        if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)) {
-            return false;
+        Vec3f b = { from.x + dir.x * length, from.y + h, from.z + dir.z * length };
+        Vec3f hitPos;
+        CollisionPoly* poly;
+        s32 bgId;
+        if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hitPos, &poly, true, false, false, true, &bgId)) {
+            f32 d = (hitPos.x - a.x) * dir.x + (hitPos.z - a.z) * dir.z;
+            if (!best.hit || d < best.dist) {
+                best.hit = true;
+                best.dist = d;
+                best.poly = poly;
+                best.bgId = bgId;
+            }
         }
     }
+    return best;
+}
 
-    // Floor: refuse to step onto a ledge too tall to climb or into the void. Drops are allowed (pitfalls).
+// Floor height under `to`, probing from just above the tallest climbable ledge. BGCHECK_Y_MIN = void.
+f32 FloorAt(PlayState* play, const Vec3f& from, const Vec3f& to) {
+    CollisionPoly* poly;
+    s32 bgId;
     Vec3f probe = { to.x, from.y + kMaxStepUp + 5.0f, to.z };
-    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
-    if (floorY <= BGCHECK_Y_MIN + 1.0f) {
-        return false;
-    }
-    return floorY <= from.y + kMaxStepUp;
+    return BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+}
+
+f32 DistXZ(const Vec3f& a, const Vec3f& b) {
+    f32 dx = b.x - a.x;
+    f32 dz = b.z - a.z;
+    return sqrtf(dx * dx + dz * dz);
 }
 
 void StartTurn(s16 yawTo) {
@@ -151,20 +181,72 @@ void StartBump(Player* player, const Vec3f& dir) {
     Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
 }
 
-void StartStep(PlayState* play, Player* player, s8 dirFacing) {
-    Vec3f dir = YawToDir(FacingToYaw(dirFacing));
-    Vec3f from = player->actor.world.pos;
-    Vec3f to = SnapToGrid({ from.x + dir.x * kTileSize, from.y, from.z + dir.z * kTileSize });
-
-    if (!CanStep(play, from, to, dir)) {
-        StartBump(player, dir);
-        return;
-    }
-
+void BeginStep(const Vec3f& from, const Vec3f& to, s16 endYaw) {
     sCrawler.action = Action::Step;
     sCrawler.timer = 0;
     sCrawler.from = from;
     sCrawler.to = to;
+    sCrawler.stepYawFrom = sCrawler.curYaw;
+    sCrawler.stepYawTo = endYaw;
+}
+
+void StartAssist() {
+    sCrawler.action = Action::Assist;
+    sCrawler.timer = 0;
+}
+
+void StartStep(PlayState* play, Player* player, s8 dirFacing) {
+    bool forward = ((dirFacing - sCrawler.facing) & 3) == 0;
+    s16 gridYaw = FacingToYaw(sCrawler.facing);
+    Vec3f dir = YawToDir(FacingToYaw(dirFacing));
+    Vec3f from = player->actor.world.pos;
+    Vec3f to = SnapToGrid({ from.x + dir.x * kTileSize, from.y, from.z + dir.z * kTileSize });
+
+    WallHit wall = ProbeWalls(play, from, dir, DistXZ(from, to) + kWallClearance);
+    if (wall.hit) {
+        u32 wallFlags = SurfaceType_GetWallFlags(&play->colCtx, wall.poly, wall.bgId);
+
+        // Vines and ladders: let the game walk Link into them so he grabs on
+        if (forward && (wallFlags & (WALL_FLAG_CLIMBABLE | WALL_FLAG_LADDER))) {
+            StartAssist();
+            return;
+        }
+
+        // Chests only open from just in front of them and centred, so line Link up with the front
+        if (forward && wall.bgId != BGCHECK_SCENE) {
+            DynaPolyActor* dyna = DynaPoly_GetActor(&play->colCtx, wall.bgId);
+            if (dyna != NULL && dyna->actor.id == ACTOR_EN_BOX) {
+                Actor* chest = &dyna->actor;
+                s16 rot = chest->shape.rot.y;
+                Vec3f front = { chest->world.pos.x - Math_SinS(rot) * kChestFrontDist, from.y,
+                                chest->world.pos.z - Math_CosS(rot) * kChestFrontDist };
+                BeginStep(from, front, Math_Vec3f_Yaw(&front, &chest->world.pos));
+                return;
+            }
+        }
+
+        // Anything else: walk up to it rather than stopping a whole tile short
+        f32 approach = wall.dist - kWallClearance;
+        if (approach < kMinApproach) {
+            StartBump(player, dir);
+            return;
+        }
+        to = { from.x + dir.x * approach, from.y, from.z + dir.z * approach };
+    }
+
+    f32 floorY = FloorAt(play, from, to);
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY > from.y + kMaxStepUp) {
+        // Void, or a ledge too tall to step onto
+        StartBump(player, dir);
+        return;
+    }
+    if (forward && floorY < from.y - kDropAssist) {
+        // A real drop: let the game walk Link off so ladder tops and ledge jumps behave normally
+        StartAssist();
+        return;
+    }
+
+    BeginStep(from, to, gridYaw);
 }
 
 void UpdateAction(Player* player) {
@@ -179,9 +261,24 @@ void UpdateAction(Player* player) {
             f32 t = SmoothStep(CLAMP_MAX((f32)sCrawler.timer / kStepFrames, 1.0f));
             player->actor.world.pos.x = sCrawler.from.x + (sCrawler.to.x - sCrawler.from.x) * t;
             player->actor.world.pos.z = sCrawler.from.z + (sCrawler.to.z - sCrawler.from.z) * t;
+            s16 yawDiff = (s16)(sCrawler.stepYawTo - sCrawler.stepYawFrom);
+            sCrawler.curYaw = (s16)(sCrawler.stepYawFrom + (s16)(yawDiff * t));
             if (sCrawler.timer >= kStepFrames) {
+                sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
                 sCrawler.action = Action::None;
+            }
+            break;
+        }
+
+        case Action::Assist: {
+            // The game is moving Link; follow his facing, and hand back once he's airborne or time is up.
+            // (If he starts climbing he becomes "busy" and the crawler steps aside on its own.)
+            sCrawler.timer++;
+            sCrawler.curYaw = player->actor.shape.rot.y;
+            bool airborne = !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND);
+            if (airborne || sCrawler.timer >= kAssistFrames) {
+                StartTurn(FacingToYaw(sCrawler.facing));
             }
             break;
         }
@@ -283,11 +380,22 @@ void OnFilterInput(Player* player, Input* input) {
             StartStep(play, player, sCrawler.facing + 3);
         } else if (left) {
             sCrawler.facing = (sCrawler.facing + 1) & 3;
-            StartTurn((s16)(sCrawler.curYaw + 0x4000));
+            StartTurn(FacingToYaw(sCrawler.facing));
         } else if (right) {
             sCrawler.facing = (sCrawler.facing + 3) & 3;
-            StartTurn((s16)(sCrawler.curYaw - 0x4000));
+            StartTurn(FacingToYaw(sCrawler.facing));
         }
+    }
+
+    if (sCrawler.action == Action::Assist) {
+        // Hold the stick straight ahead (the camera faces Link's way, so "up" is forward) and let the game
+        // move Link: this is what makes him grab vines and ladders or climb down from a ladder top.
+        for (OSContPad* pad : { &input->cur, &input->rel }) {
+            pad->stick_x = 0;
+            pad->stick_y = 80;
+        }
+        UpdateAction(player);
+        return;
     }
 
     UpdateAction(player);
