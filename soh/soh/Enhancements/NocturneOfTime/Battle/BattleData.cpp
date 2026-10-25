@@ -30,6 +30,12 @@ Skill Make(const char* name, Element element, TargetType target, int power, int 
     return s;
 }
 
+Skill Inflicts(Skill s, Ailment a, float chance) {
+    s.inflict = a;
+    s.inflictChance = chance;
+    return s;
+}
+
 Skill Describe(Skill s, const char* description) {
     s.description = description;
     return s;
@@ -179,6 +185,7 @@ Combatant MakeEnemy(EnemyKind kind) {
             c.skills = {
                 Make("Ram", Element::Strike, TargetType::OneEnemy, 12, 0),
                 Make("Spin", Element::Strike, TargetType::AllEnemies, 7, 0),
+                Inflicts(Make("Venom Fang", Element::Pierce, TargetType::OneEnemy, 8, 0), Ailment::Poison, 0.4f),
             };
             c.xpReward = 28;
             c.rupeeMin = 8;
@@ -204,7 +211,7 @@ Combatant MakeEnemy(EnemyKind kind) {
             SetAffinity(c, Element::Strike, Affinity::Null); // too quick to club out of the air
             c.skills = {
                 Make("Wing Slash", Element::Slash, TargetType::OneEnemy, 7, 0),
-                Make("Flame Dive", Element::Fire, TargetType::OneEnemy, 9, 3),
+                Inflicts(Make("Flame Dive", Element::Fire, TargetType::OneEnemy, 9, 3), Ailment::Burn, 0.35f),
             };
             c.xpReward = 18;
             c.rupeeMin = 3;

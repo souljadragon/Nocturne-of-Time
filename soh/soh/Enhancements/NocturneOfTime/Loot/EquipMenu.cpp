@@ -37,7 +37,8 @@ namespace {
 constexpr int kStartLevel = 5; // matches the battle scene, used if the menu opens before any battle
 constexpr int kVisibleItems = 6;
 
-enum class Page { Closed, Members, Slots, Items };
+// Members: pick a member (or the "Items" row below them). Slots/Items: equipment. Use/UseTarget: consumables.
+enum class Page { Closed, Members, Slots, Items, Use, UseTarget };
 
 const char* kSlotLabels[(size_t)Slot::Count] = { "Weapon", "Armor", "Acc." };
 
@@ -49,6 +50,9 @@ struct Menu {
     int itemScroll = 0;
     int stickDir = 0;
     bool showLore = false; // Z: the right panel shows the focused item's description and lore
+    int useCursor = 0;     // index into OwnedConsumables()
+    int useTarget = 0;     // member receiving the item
+    std::string note;      // result of the last item use
 };
 
 Menu sMenu;
@@ -75,6 +79,30 @@ std::vector<int> Choices() {
         }
     }
     return out;
+}
+
+std::vector<ConsumableId> OwnedConsumables() {
+    std::vector<ConsumableId> owned;
+    const auto& counts = Party_Consumables();
+    for (size_t i = 0; i < counts.size(); i++) {
+        if (counts[i] > 0) {
+            owned.push_back((ConsumableId)i);
+        }
+    }
+    return owned;
+}
+
+// The left list's "Items" row sits just below the members
+bool OnItemsRow() {
+    return sMenu.page == Page::Members && sMenu.member >= (int)Party_Members().size();
+}
+
+std::string JoinLines(const std::vector<std::string>& lines) {
+    std::string out;
+    for (const std::string& l : lines) {
+        out += (out.empty() ? "" : ". ") + l;
+    }
+    return out.empty() ? out : out + ".";
 }
 
 struct Buttons {
@@ -144,6 +172,8 @@ bool EquipMenu_IsOpen() {
 void EquipMenu_Open() {
     Party_EnsureCreated(kStartLevel);
     sMenu.page = Page::Members;
+    sMenu.member = std::clamp(sMenu.member, 0, (int)Party_Members().size() - 1);
+    sMenu.note.clear();
     sMenu.slot = 0;
     sMenu.itemCursor = 0;
     sMenu.itemScroll = 0;
@@ -168,7 +198,7 @@ void EquipMenu_Update(void* inputPtr) {
         EquipMenu_Close();
         return;
     }
-    if (in.z && sMenu.page != Page::Members) {
+    if (in.z && (sMenu.page == Page::Slots || sMenu.page == Page::Items)) {
         sMenu.showLore = !sMenu.showLore;
         PlaySfx(NA_SE_SY_CURSOR);
         return;
@@ -177,14 +207,79 @@ void EquipMenu_Update(void* inputPtr) {
     switch (sMenu.page) {
         case Page::Members:
             if (in.up || in.down) {
-                Move(sMenu.member, (int)members.size(), in.up);
+                Move(sMenu.member, (int)members.size() + 1, in.up); // + the Items row
             } else if (in.a) {
-                sMenu.page = Page::Slots;
-                PlaySfx(NA_SE_SY_DECIDE);
+                if (OnItemsRow()) {
+                    if (OwnedConsumables().empty()) {
+                        PlaySfx(NA_SE_SY_ERROR);
+                    } else {
+                        sMenu.page = Page::Use;
+                        sMenu.useCursor = std::clamp(sMenu.useCursor, 0, (int)OwnedConsumables().size() - 1);
+                        sMenu.note.clear();
+                        PlaySfx(NA_SE_SY_DECIDE);
+                    }
+                } else {
+                    sMenu.page = Page::Slots;
+                    PlaySfx(NA_SE_SY_DECIDE);
+                }
             } else if (in.b) {
                 EquipMenu_Close();
             }
             break;
+
+        case Page::Use: {
+            std::vector<ConsumableId> owned = OwnedConsumables();
+            if (owned.empty()) {
+                sMenu.page = Page::Members;
+                break;
+            }
+            sMenu.useCursor = std::clamp(sMenu.useCursor, 0, (int)owned.size() - 1);
+            const ConsumableDef& def = ConsumableOf(owned[sMenu.useCursor]);
+            if (in.up || in.down) {
+                Move(sMenu.useCursor, (int)owned.size(), in.up);
+            } else if (in.a) {
+                if (def.battleOnly) {
+                    PlaySfx(NA_SE_SY_ERROR);
+                    sMenu.note = "That can only be used in battle.";
+                } else if (def.effect.target == TargetType::AllAllies) {
+                    std::vector<std::string> result = Party_UseConsumable(def.id, -1);
+                    PlaySfx(result.empty() ? NA_SE_SY_ERROR : NA_SE_SY_HP_RECOVER);
+                    sMenu.note = result.empty() ? "It would have no effect." : JoinLines(result);
+                } else {
+                    sMenu.page = Page::UseTarget;
+                    sMenu.useTarget = 0;
+                    sMenu.note.clear();
+                    PlaySfx(NA_SE_SY_DECIDE);
+                }
+            } else if (in.b) {
+                sMenu.page = Page::Members;
+                PlaySfx(NA_SE_SY_CANCEL);
+            }
+            break;
+        }
+
+        case Page::UseTarget: {
+            std::vector<ConsumableId> owned = OwnedConsumables();
+            if (owned.empty() || sMenu.useCursor >= (int)owned.size()) {
+                sMenu.page = owned.empty() ? Page::Members : Page::Use;
+                break;
+            }
+            ConsumableId id = owned[sMenu.useCursor];
+            if (in.up || in.down) {
+                Move(sMenu.useTarget, (int)members.size(), in.up);
+            } else if (in.a) {
+                std::vector<std::string> result = Party_UseConsumable(id, sMenu.useTarget);
+                PlaySfx(result.empty() ? NA_SE_SY_ERROR : NA_SE_SY_HP_RECOVER);
+                sMenu.note = result.empty() ? "It would have no effect." : JoinLines(result);
+                if (Party_Consumables()[(size_t)id] <= 0) {
+                    sMenu.page = Page::Use; // used the last one
+                }
+            } else if (in.b) {
+                sMenu.page = Page::Use;
+                PlaySfx(NA_SE_SY_CANCEL);
+            }
+            break;
+        }
 
         case Page::Slots:
             if (in.up || in.down) {
@@ -322,6 +417,115 @@ static std::vector<Diff> CompareStats(const Combatant& now, const Combatant& nex
     return out;
 }
 
+// Consumables: the left list stays (members + Items), the right panel lists what the party carries.
+static void DrawItemsView(PlayState* play) {
+    std::vector<PartyMember>& members = Party_Members();
+    std::vector<ConsumableId> owned = OwnedConsumables();
+    const int leftX = 10, leftW = 92;
+    const int memY = 26, memH = ((int)members.size() + 1) * 10 + 4;
+    const int rightX = 108, rightW = SCREEN_WIDTH - 118, rightY = 26, rightH = 178;
+    const size_t rightChars = (size_t)(rightW - 8) / 8;
+    int useCursor = owned.empty() ? 0 : std::clamp(sMenu.useCursor, 0, (int)owned.size() - 1);
+    bool listActive = sMenu.page == Page::Use || sMenu.page == Page::UseTarget;
+
+    OPEN_DISPS(play->state.gfxCtx);
+    Gfx* gfx = OVERLAY_DISP;
+    gSPDisplayList(gfx++, sMenuRectDL);
+    MenuRect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 0, 110);
+    MenuPanel(&gfx, leftX, memY, leftW, memH);
+    MenuPanel(&gfx, rightX, rightY, rightW, rightH);
+    int leftSel = sMenu.page == Page::UseTarget ? sMenu.useTarget : (int)members.size();
+    MenuRect(&gfx, leftX + 1, memY + 2 + leftSel * 10, leftW - 2, 10, 40, 60, 110, 230);
+    if (listActive && !owned.empty()) {
+        MenuRect(&gfx, rightX + 1, rightY + 15 + useCursor * 10, rightW - 2, 10, 40, 60, 110, 230);
+    }
+
+    GfxPrint printer;
+    GfxPrint_Init(&printer);
+    GfxPrint_Open(&printer, gfx);
+    auto text = [&](int x, int y, const std::string& s, u8 r, u8 g, u8 b) {
+        GfxPrint_SetColor(&printer, r, g, b, 255);
+        GfxPrint_SetPosPx(&printer, x, y);
+        GfxPrint_Printf(&printer, "%s", s.c_str());
+    };
+
+    text(leftX, 12, "ITEMS", 230, 230, 230);
+    for (int i = 0; i < (int)members.size(); i++) {
+        char line[24];
+        snprintf(line, sizeof(line), "%-6s Lv%d", members[i].base.name.c_str(), members[i].base.level);
+        bool sel = sMenu.page == Page::UseTarget && i == sMenu.useTarget;
+        text(leftX + 3, memY + 3 + i * 10, line, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
+    }
+    bool rowSel = sMenu.page != Page::UseTarget;
+    text(leftX + 3, memY + 3 + (int)members.size() * 10, "Items", rowSel ? 255 : 170, rowSel ? 230 : 200,
+         rowSel ? 90 : 160);
+
+    int y = rightY + 4;
+    text(rightX + 4, y, "Carried", 140, 150, 180);
+    y += 11;
+    if (owned.empty()) {
+        text(rightX + 4, y, "No items.", 150, 150, 150);
+        y += 10;
+    }
+    for (int i = 0; i < (int)owned.size(); i++) {
+        const ConsumableDef& def = ConsumableOf(owned[i]);
+        bool sel = listActive && i == useCursor;
+        u8 shade = def.battleOnly ? 130 : 210; // battle-only items are greyed here
+        text(rightX + 4, y, std::string(sel ? ">" : " ") + def.name, sel ? 255 : shade, sel ? 230 : shade,
+             sel ? 90 : shade);
+        std::string count = "x" + std::to_string(Party_Consumables()[(size_t)def.id]);
+        text(rightX + rightW - 6 - (int)count.size() * 8, y, count, sel ? 255 : shade, sel ? 230 : shade,
+             sel ? 90 : shade);
+        y += 10;
+    }
+    y += 6;
+    if (listActive && !owned.empty()) {
+        const ConsumableDef& def = ConsumableOf(owned[useCursor]);
+        for (const std::string& l : Wrap(def.description, rightChars)) {
+            text(rightX + 4, y, l, 170, 200, 160);
+            y += 9;
+        }
+        if (def.battleOnly) {
+            text(rightX + 4, y, "Battle only", 150, 150, 170);
+            y += 9;
+        }
+        y += 5;
+    }
+    // Party status, so the effect of an item can be seen
+    for (const PartyMember& pm : members) {
+        Combatant e = Party_Effective(pm);
+        char line[48];
+        snprintf(line, sizeof(line), "%-6s HP %d/%d", e.name.c_str(), e.hp, e.maxHp);
+        text(rightX + 4, y, line, 200, 220, 200);
+        snprintf(line, sizeof(line), "       MP %d/%d", e.mp, e.maxMp);
+        text(rightX + 4, y + 9, line, 200, 220, 200);
+        if (e.ailment != Ailment::None) {
+            text(rightX + 4 + (int)strlen(line) * 8 + 8, y + 9, AilmentName(e.ailment), 200, 130, 255);
+        }
+        y += 20;
+    }
+    if (!sMenu.note.empty()) {
+        y += 4;
+        for (const std::string& l : Wrap(sMenu.note, rightChars)) {
+            if (y > rightY + rightH - 10) {
+                break;
+            }
+            text(rightX + 4, y, l, 255, 230, 140);
+            y += 9;
+        }
+    }
+
+    const char* hint = sMenu.page == Page::Members  ? "A: Choose  B/R: Close"
+                       : sMenu.page == Page::Use     ? "A: Use  B: Back"
+                                                     : "A: Give  B: Back";
+    text(leftX, SCREEN_HEIGHT - 26, hint, 150, 150, 170);
+
+    gfx = GfxPrint_Close(&printer);
+    GfxPrint_Destroy(&printer);
+    OVERLAY_DISP = gfx;
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 void EquipMenu_Draw(PlayState* play) {
     if (sMenu.page == Page::Closed) {
         return;
@@ -330,12 +534,16 @@ void EquipMenu_Draw(PlayState* play) {
     if (members.empty()) {
         return;
     }
+    if (OnItemsRow() || sMenu.page == Page::Use || sMenu.page == Page::UseTarget) {
+        DrawItemsView(play);
+        return;
+    }
     sMenu.member = std::clamp(sMenu.member, 0, (int)members.size() - 1);
     const PartyMember& m = members[sMenu.member];
     Combatant eff = Party_Effective(m);
 
     const int leftX = 10, leftW = 92;
-    const int memY = 26, memH = (int)members.size() * 10 + 4;
+    const int memY = 26, memH = ((int)members.size() + 1) * 10 + 4; // + the Items row
     const int slotY = memY + memH + 8, slotH = (int)Slot::Count * 10 + 4;
     const int rightX = 108, rightW = SCREEN_WIDTH - 118, rightY = 26, rightH = 178;
     const size_t rightChars = (size_t)(rightW - 8) / 8;
@@ -383,6 +591,7 @@ void EquipMenu_Draw(PlayState* play) {
         bool sel = i == sMenu.member;
         text(leftX + 3, memY + 3 + i * 10, line, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
     }
+    text(leftX + 3, memY + 3 + (int)members.size() * 10, "Items", 170, 200, 160);
     for (int i = 0; i < (int)Slot::Count; i++) {
         bool sel = sMenu.page != Page::Members && i == sMenu.slot;
         text(leftX + 3, slotY + 3 + i * 10, kSlotLabels[i], sel ? 255 : 200, sel ? 230 : 200, sel ? 90 : 200);
@@ -452,6 +661,9 @@ void EquipMenu_Draw(PlayState* play) {
         char line[48];
         snprintf(line, sizeof(line), "HP %d/%d  MP %d/%d", eff.hp, eff.maxHp, eff.mp, eff.maxMp);
         text(rightX + 4, y, line, 200, 220, 200);
+        if (eff.ailment != Ailment::None) {
+            text(rightX + 4 + (int)strlen(line) * 8 + 8, y, AilmentTag(eff.ailment), 200, 130, 255);
+        }
         y += 10;
         snprintf(line, sizeof(line), "St %d  Ma %d  Vi %d", eff.st, eff.ma, eff.vi);
         text(rightX + 4, y, line, 220, 220, 220);

@@ -103,6 +103,93 @@ BattleEvent Msg(std::string text) {
 
 } // namespace
 
+const char* AilmentName(Ailment a) {
+    switch (a) {
+        case Ailment::Poison:
+            return "Poison";
+        case Ailment::Burn:
+            return "Burn";
+        default:
+            return "";
+    }
+}
+
+const char* AilmentTag(Ailment a) {
+    switch (a) {
+        case Ailment::Poison:
+            return "PSN";
+        case Ailment::Burn:
+            return "BRN";
+        default:
+            return "";
+    }
+}
+
+int AilmentDamage(Ailment a, int maxHp) {
+    switch (a) {
+        case Ailment::Poison:
+            return std::max(1, maxHp / 12);
+        case Ailment::Burn:
+            return std::max(1, maxHp / 10);
+        default:
+            return 0;
+    }
+}
+
+bool ItemHelps(const ItemEffect& e, const Combatant& c) {
+    if (!c.Alive()) {
+        return e.revive > 0.0f;
+    }
+    if ((e.hp > 0 || e.fullHp) && c.hp < c.maxHp) {
+        return true;
+    }
+    if ((e.mp > 0 || e.fullMp) && c.mp < c.maxMp) {
+        return true;
+    }
+    if (c.ailment != Ailment::None && (e.curesAll || e.cures == c.ailment)) {
+        return true;
+    }
+    return false;
+}
+
+bool ApplyItemEffect(const ItemEffect& e, Combatant& c, std::vector<std::string>* messages) {
+    if (!ItemHelps(e, c)) {
+        return false;
+    }
+    auto say = [&](const std::string& m) {
+        if (messages != nullptr) {
+            messages->push_back(m);
+        }
+    };
+    if (!c.Alive()) {
+        c.hp = std::max(1, (int)std::lround(c.maxHp * e.revive));
+        c.ailment = Ailment::None;
+        c.ailmentTurns = 0;
+        say(c.name + " is revived!");
+        return true;
+    }
+    if (e.hp > 0 || e.fullHp) {
+        int before = c.hp;
+        c.hp = e.fullHp ? c.maxHp : std::min(c.maxHp, c.hp + e.hp);
+        if (c.hp > before) {
+            say(c.name + " recovers " + std::to_string(c.hp - before) + " HP");
+        }
+    }
+    if (e.mp > 0 || e.fullMp) {
+        int before = c.mp;
+        c.mp = e.fullMp ? c.maxMp : std::min(c.maxMp, c.mp + e.mp);
+        if (c.mp > before) {
+            say(c.name + " recovers " + std::to_string(c.mp - before) + " MP");
+        }
+    }
+    if (c.ailment != Ailment::None && (e.curesAll || e.cures == c.ailment)) {
+        say(c.name + " is cured of " + std::string(AilmentName(c.ailment)) + "!");
+        c.ailment = Ailment::None;
+        c.ailmentTurns = 0;
+    }
+    return true;
+}
+
 Battle::Battle(std::vector<Combatant> party, std::vector<Combatant> enemies, std::function<float()> rand01)
     : mParty(std::move(party)), mEnemies(std::move(enemies)), mRand(std::move(rand01)) {
     Events ignored;
@@ -126,6 +213,28 @@ void Battle::StartPartyTurn(Events& out) {
     mActive = -1;
     AdvanceActive();
     out.push_back(Ev(BattleEvent::Type::PhaseChange, false, -1, false, -1, 0, "Your turn"));
+    TickAilments(mParty, false, out);
+}
+
+void Battle::TickAilments(std::vector<Combatant>& side, bool sideIsEnemy, Events& out) {
+    for (int i = 0; i < (int)side.size(); i++) {
+        Combatant& c = side[i];
+        if (!c.Alive() || c.ailment == Ailment::None) {
+            continue;
+        }
+        int dmg = std::min(AilmentDamage(c.ailment, c.maxHp), c.hp - 1); // never the last HP
+        if (dmg > 0) {
+            c.hp -= dmg;
+            out.push_back(Ev(BattleEvent::Type::Hit, sideIsEnemy, i, sideIsEnemy, i, dmg,
+                             c.name + " takes " + std::to_string(dmg) + " " +
+                                 (c.ailment == Ailment::Poison ? "poison" : "burn") + " damage"));
+        }
+        if (c.ailment == Ailment::Burn && --c.ailmentTurns <= 0) {
+            c.ailment = Ailment::None;
+            c.ailmentTurns = 0;
+            out.push_back(Msg(c.name + "'s burn fades."));
+        }
+    }
 }
 
 void Battle::StartEnemyTurn(Events& out) {
@@ -139,6 +248,7 @@ void Battle::StartEnemyTurn(Events& out) {
         mEnemyCursor++;
     }
     out.push_back(Ev(BattleEvent::Type::PhaseChange, true, -1, false, -1, 0, "Enemy turn"));
+    TickAilments(mEnemies, true, out);
 }
 
 bool Battle::AdvanceActive() {
@@ -311,6 +421,16 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     if (!def.Alive()) {
         out.push_back(Ev(BattleEvent::Type::Defeated, userIsEnemy, userIndex, targetIsEnemy, target, 0,
                          def.name + (targetIsEnemy ? " is defeated!" : " is down!")));
+    } else if (skill.inflict != Ailment::None && def.ailment == Ailment::None) {
+        float chance = std::clamp(skill.inflictChance + (user.lu - def.lu) * 0.01f, 0.05f, 0.9f);
+        if (mRand() < chance) {
+            def.ailment = skill.inflict;
+            def.ailmentTurns = skill.inflict == Ailment::Burn ? kBurnTurns : 0;
+            BattleEvent e = Ev(BattleEvent::Type::Message, userIsEnemy, userIndex, targetIsEnemy, target, 0,
+                               def.name + (skill.inflict == Ailment::Poison ? " is poisoned!" : " is burned!"));
+            e.color = skill.inflict == Ailment::Poison ? 0xC080FF00u : 0xFF904000u;
+            out.push_back(e);
+        }
     }
     return (weak || crit) ? Outcome::WeakOrCrit : Outcome::Normal;
 }
@@ -380,6 +500,49 @@ Events Battle::UseSkill(int skill, int target) {
         out.push_back(Ev(BattleEvent::Type::TurnLost, false, mActive, false, -1, 0,
                          worst == Outcome::RepelOrDrain ? "The turn is lost!" : "Lost extra turns!"));
     }
+    AfterAction(out);
+    return out;
+}
+
+bool Battle::CanUseItem(const ItemEffect& effect, int target) const {
+    if (mPhase != BattlePhase::PartyCommand || mActive < 0) {
+        return false;
+    }
+    if (effect.target == TargetType::AllAllies) {
+        for (const Combatant& c : mParty) {
+            if (ItemHelps(effect, c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return target >= 0 && target < (int)mParty.size() && ItemHelps(effect, mParty[target]);
+}
+
+Events Battle::UseItem(const std::string& itemName, const ItemEffect& effect, int target) {
+    Events out;
+    if (!CanUseItem(effect, target)) {
+        return out;
+    }
+    out.push_back(Msg(mParty[mActive].name + " uses " + itemName + "!"));
+    for (int i = 0; i < (int)mParty.size(); i++) {
+        if (effect.target != TargetType::AllAllies && i != target) {
+            continue;
+        }
+        Combatant& c = mParty[i];
+        bool wasDown = !c.Alive();
+        int before = c.hp;
+        std::vector<std::string> messages;
+        if (!ApplyItemEffect(effect, c, &messages)) {
+            continue;
+        }
+        for (const std::string& m : messages) {
+            BattleEvent e = Ev(c.hp > before || wasDown ? BattleEvent::Type::Heal : BattleEvent::Type::Message, false,
+                               mActive, false, i, c.hp - before, m);
+            out.push_back(e);
+        }
+    }
+    mIcons.UseFull();
     AfterAction(out);
     return out;
 }

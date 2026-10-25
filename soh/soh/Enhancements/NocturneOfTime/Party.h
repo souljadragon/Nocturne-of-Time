@@ -5,9 +5,11 @@
 
 #include "Battle/BattleEngine.h"
 #include "Loot/Loot.h"
+#include "Items/Consumables.h"
 
 #include <array>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace Nocturne {
@@ -22,10 +24,18 @@ struct PartyMember {
 std::vector<PartyMember>& Party_Members();
 std::vector<Item>& Party_Bag();
 
+// Consumables carried, by ConsumableId. A new party starts with a few Red Potions and a Hylian Herb.
+std::array<int, (size_t)ConsumableId::Count>& Party_Consumables();
+// Add up to `count` (stopping at kMaxCarry); returns how many were added.
+int Party_AddConsumable(ConsumableId id, int count = 1);
+// Use one outside battle on `member` (every member for party-wide items). Returns what happened; empty if it
+// would do nothing, in which case nothing is used up.
+std::vector<std::string> Party_UseConsumable(ConsumableId id, int member);
+
 // Create Link and Saria (with starting gear) if the party doesn't exist yet.
 void Party_EnsureCreated(int startLevel);
 void Party_Reset();
-void Party_HealAll();
+void Party_HealAll(); // also cures ailments
 
 // The member's battle stats: base stats plus equipment, current HP/MP clamped to the new maximums.
 Combatant Party_Effective(const PartyMember& member);

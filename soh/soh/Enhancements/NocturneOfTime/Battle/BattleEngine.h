@@ -37,6 +37,15 @@ const char* AffinityName(Affinity a);
 
 enum class TargetType : uint8_t { OneEnemy, AllEnemies, OneAlly, AllAllies };
 
+// Status ailments. Poison lasts until cured (even after the battle); Burn wears off after a few turns and at the
+// end of the battle. Neither can take the last HP.
+enum class Ailment : uint8_t { None, Poison, Burn, Count };
+const char* AilmentName(Ailment a); // "Poison"
+const char* AilmentTag(Ailment a);  // "PSN", for the party panel
+constexpr int kBurnTurns = 3;
+// Damage an ailment deals at the start of its victim's turn.
+int AilmentDamage(Ailment a, int maxHp);
+
 struct Skill {
     std::string name;
     Element element = Element::Slash;
@@ -46,7 +55,19 @@ struct Skill {
     int mpCost = 0;
     int hpCost = 0;      // flat HP cost (physical techniques)
     float accuracy = 0.95f;
+    Ailment inflict = Ailment::None; // chance to afflict the target on a hit
+    float inflictChance = 0.0f;
     std::string description; // shown in the skill menu
+};
+
+// What a consumable does when used on someone (see Items/Consumables for the actual items).
+struct ItemEffect {
+    TargetType target = TargetType::OneAlly; // OneAlly or AllAllies
+    int hp = 0, mp = 0;                      // restored
+    bool fullHp = false, fullMp = false;
+    float revive = 0.0f;               // > 0: revives a fallen ally with this fraction of max HP
+    Ailment cures = Ailment::None;     // cures this ailment...
+    bool curesAll = false;             // ...or every ailment
 };
 
 struct Combatant {
@@ -72,6 +93,8 @@ struct Combatant {
     int rupeeMin = 0, rupeeMax = 0;
 
     bool guarding = false;
+    Ailment ailment = Ailment::None;
+    int ailmentTurns = 0; // turns left for ailments that wear off
 
     bool Alive() const {
         return hp > 0;
@@ -136,6 +159,12 @@ struct BattleEvent {
 
 using Events = std::vector<BattleEvent>;
 
+// Would this item do anything for `c`? (Healing at full HP, curing what isn't there or reviving the living
+// does nothing.)
+bool ItemHelps(const ItemEffect& effect, const Combatant& c);
+// Apply an item to `c` (in or out of battle), adding a message per effect to `messages`. False if nothing changed.
+bool ApplyItemEffect(const ItemEffect& effect, Combatant& c, std::vector<std::string>* messages);
+
 enum class BattlePhase { PartyCommand, EnemyTurn, Victory, Defeat, Escaped };
 
 class Battle {
@@ -170,6 +199,10 @@ class Battle {
     Events Pass();
     Events Analyze(int enemy);
     Events Run();
+    // Use a consumable on party member `target` (ignored for AllAllies). The scene removes it from the bag when
+    // this returns events. Uses one Press Turn icon.
+    bool CanUseItem(const ItemEffect& effect, int target) const;
+    Events UseItem(const std::string& itemName, const ItemEffect& effect, int target);
 
     // ---- Enemy turn: one enemy acts per call (only in EnemyTurn).
     Events EnemyAct();
@@ -190,6 +223,7 @@ class Battle {
     void AfterAction(Events& out);
     void StartPartyTurn(Events& out);
     void StartEnemyTurn(Events& out);
+    void TickAilments(std::vector<Combatant>& side, bool sideIsEnemy, Events& out);
     bool AdvanceActive(); // next living party member; false if none
     bool CheckEnd(Events& out);
     int CountAlive(const std::vector<Combatant>& side) const;

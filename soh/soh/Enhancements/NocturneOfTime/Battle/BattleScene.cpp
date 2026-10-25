@@ -56,10 +56,12 @@ constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 
-enum class Ui { None, Intro, Command, Skills, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
+enum class Ui { None, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
 
-enum Command { CMD_ATTACK, CMD_SKILL, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_AUTO, CMD_RUN, CMD_COUNT };
-const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Guard", "Pass", "Analyze", "Auto", "Run" };
+enum Command { CMD_ATTACK, CMD_SKILL, CMD_ITEM, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_AUTO, CMD_RUN, CMD_COUNT };
+const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Item", "Guard", "Pass", "Analyze", "Auto", "Run" };
+constexpr float kConsumableDropChance = 0.25f; // per defeated enemy
+constexpr int kMaxConsumableDrops = 2;          // per battle
 
 // Auto-battle: everyone attacks with their weapon and messages fly by (for clearing easy fights quickly)
 constexpr int kAutoMessageFrames = 7;  // normal messages
@@ -67,6 +69,7 @@ constexpr int kAutoHeldFrames = 16;    // messages that usually wait for A (rewa
 constexpr int kAutoThinkFrames = 2;    // pause before each enemy acts
 
 constexpr int kPendingAnalyze = -2;
+constexpr int kPendingItem = -3; // TargetAlly is choosing who gets sScene.pendingItem
 
 struct Scene {
     std::unique_ptr<Battle> battle;
@@ -95,6 +98,8 @@ struct Scene {
     int statMember = -1;        // party member placing level-up points
     int statCursor = 0;
     bool autoBattle = false; // until B is pressed or the battle ends
+    int itemCursor = 0;      // index into OwnedItems()
+    ConsumableId pendingItem = ConsumableId::RedPotion;
 };
 
 Scene sScene;
@@ -370,6 +375,9 @@ void EndBattle() {
         for (size_t i = 0; i < after.size() && i < members.size(); i++) {
             members[i].base.hp = std::max(after[i].hp, 1);
             members[i].base.mp = after[i].mp;
+            // Poison lingers after the battle; burns go out
+            members[i].base.ailment = after[i].ailment == Ailment::Poison ? Ailment::Poison : Ailment::None;
+            members[i].base.ailmentTurns = 0;
         }
     }
     KillEnemyActors();
@@ -413,6 +421,8 @@ void QueueRewards() {
         PartyMember& m = members[i];
         m.base.hp = after[i].hp;
         m.base.mp = after[i].mp;
+        m.base.ailment = after[i].ailment == Ailment::Poison ? Ailment::Poison : Ailment::None;
+        m.base.ailmentTurns = 0;
         if (!after[i].Alive()) {
             continue; // fallen allies earn nothing
         }
@@ -459,6 +469,22 @@ void QueueRewards() {
             found.hold = true;
             Rgb c = RarityColor(item.rarity);
             found.color = ((uint32_t)c.r << 24) | ((uint32_t)c.g << 16) | ((uint32_t)c.b << 8);
+            sScene.queue.push_back(found);
+        }
+    }
+
+    // Consumables: potions, herbs and the like, separate from gear
+    int consumableDrops = 0;
+    for (size_t i = 0; i < b.Enemies().size() && consumableDrops < kMaxConsumableDrops; i++) {
+        if (Rand_ZeroOne() < kConsumableDropChance) {
+            ConsumableId id = RollConsumable(rng);
+            consumableDrops++;
+            BattleEvent found;
+            found.type = BattleEvent::Type::Message;
+            found.hold = true;
+            found.text = Party_AddConsumable(id) > 0 ? "Found a " + ConsumableOf(id).name + "!"
+                                                     : "Found a " + ConsumableOf(id).name + ", but the bag is full.";
+            found.color = 0x90E0A000u; // pale green
             sScene.queue.push_back(found);
         }
     }
@@ -660,12 +686,30 @@ int FirstAliveEnemy() {
     return 0;
 }
 
+// Consumables the party has at least one of, in ConsumableId order.
+std::vector<ConsumableId> OwnedItems() {
+    std::vector<ConsumableId> owned;
+    const auto& counts = Party_Consumables();
+    for (size_t i = 0; i < counts.size(); i++) {
+        if (counts[i] > 0) {
+            owned.push_back((ConsumableId)i);
+        }
+    }
+    return owned;
+}
+
+// Choosing who gets a revival item: fallen allies are valid targets.
+bool TargetingFallen() {
+    return sScene.pendingSkill == kPendingItem && ConsumableOf(sScene.pendingItem).effect.revive > 0.0f;
+}
+
 void StepTarget(int delta, bool enemies) {
     const std::vector<Combatant>& side = enemies ? sScene.battle->Enemies() : sScene.battle->Party();
     int n = (int)side.size();
+    bool fallenOk = !enemies && TargetingFallen();
     for (int step = 1; step <= n; step++) {
         int i = ((sScene.targetCursor + delta * step) % n + n) % n;
-        if (side[i].Alive()) {
+        if (side[i].Alive() || fallenOk) {
             sScene.targetCursor = i;
             PlaySfx(NA_SE_SY_CURSOR);
             return;
@@ -698,6 +742,42 @@ void ChooseSkill(int skill) {
     }
 }
 
+void UseItemOn(int target) {
+    Battle& b = *sScene.battle;
+    const ConsumableDef& def = ConsumableOf(sScene.pendingItem);
+    if (Party_Consumables()[(size_t)def.id] <= 0 || !b.CanUseItem(def.effect, target)) {
+        PlaySfx(NA_SE_SY_ERROR); // it would do nothing (full HP, nothing to cure...)
+        return;
+    }
+    PlaySfx(NA_SE_SY_DECIDE);
+    Events ev = b.UseItem(def.name, def.effect, target);
+    if (!ev.empty()) {
+        Party_Consumables()[(size_t)def.id]--;
+        Queue(ev);
+    }
+}
+
+void ChooseItem(ConsumableId id) {
+    Battle& b = *sScene.battle;
+    const ConsumableDef& def = ConsumableOf(id);
+    sScene.pendingItem = id;
+    if (def.effect.target == TargetType::AllAllies) {
+        UseItemOn(-1);
+        return;
+    }
+    PlaySfx(NA_SE_SY_DECIDE);
+    sScene.pendingSkill = kPendingItem;
+    // Start on someone it would help
+    sScene.targetCursor = b.ActivePartyMember();
+    for (int i = 0; i < (int)b.Party().size(); i++) {
+        if (ItemHelps(def.effect, b.Party()[i])) {
+            sScene.targetCursor = i;
+            break;
+        }
+    }
+    sScene.ui = Ui::TargetAlly;
+}
+
 void HandleInput(const Buttons& in) {
     Battle& b = *sScene.battle;
     const Combatant& member = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
@@ -716,6 +796,15 @@ void HandleInput(const Buttons& in) {
                         if (member.skills.size() > 1) {
                             sScene.skillCursor = 1;
                             sScene.ui = Ui::Skills;
+                            PlaySfx(NA_SE_SY_DECIDE);
+                        } else {
+                            PlaySfx(NA_SE_SY_ERROR);
+                        }
+                        break;
+                    case CMD_ITEM:
+                        if (!OwnedItems().empty()) {
+                            sScene.itemCursor = std::clamp(sScene.itemCursor, 0, (int)OwnedItems().size() - 1);
+                            sScene.ui = Ui::Items;
                             PlaySfx(NA_SE_SY_DECIDE);
                         } else {
                             PlaySfx(NA_SE_SY_ERROR);
@@ -767,6 +856,29 @@ void HandleInput(const Buttons& in) {
             break;
         }
 
+        case Ui::Items: {
+            std::vector<ConsumableId> owned = OwnedItems();
+            if (owned.empty()) {
+                sScene.ui = Ui::Command;
+                break;
+            }
+            int count = (int)owned.size();
+            sScene.itemCursor = std::clamp(sScene.itemCursor, 0, count - 1);
+            if (in.up || in.down) {
+                sScene.itemCursor = (sScene.itemCursor + (in.up ? count - 1 : 1)) % count;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else if (in.z) {
+                sScene.showSkillInfo = !sScene.showSkillInfo;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else if (in.a) {
+                ChooseItem(owned[sScene.itemCursor]);
+            } else if (in.b) {
+                sScene.ui = Ui::Command;
+                PlaySfx(NA_SE_SY_CANCEL);
+            }
+            break;
+        }
+
         case Ui::TargetEnemy:
         case Ui::TargetAlly: {
             bool enemies = sScene.ui == Ui::TargetEnemy;
@@ -775,16 +887,20 @@ void HandleInput(const Buttons& in) {
             } else if (in.right || in.down) {
                 StepTarget(1, enemies);
             } else if (in.a) {
-                PlaySfx(NA_SE_SY_DECIDE);
-                if (sScene.pendingSkill == kPendingAnalyze) {
+                if (sScene.pendingSkill == kPendingItem) {
+                    UseItemOn(sScene.targetCursor);
+                } else if (sScene.pendingSkill == kPendingAnalyze) {
+                    PlaySfx(NA_SE_SY_DECIDE);
                     Queue(b.Analyze(sScene.targetCursor));
                 } else {
+                    PlaySfx(NA_SE_SY_DECIDE);
                     Queue(b.UseSkill(sScene.pendingSkill, sScene.targetCursor));
                 }
             } else if (in.b) {
                 PlaySfx(NA_SE_SY_CANCEL);
-                bool fromSkills = sScene.pendingSkill > 0;
-                sScene.ui = fromSkills ? Ui::Skills : Ui::Command;
+                sScene.ui = sScene.pendingSkill > 0             ? Ui::Skills
+                            : sScene.pendingSkill == kPendingItem ? Ui::Items
+                                                                  : Ui::Command;
             }
             break;
         }
@@ -1058,17 +1174,20 @@ void Battle_DrawUi(PlayState* play) {
         msg1 = msg1.substr(0, cut);
     }
     const int msgH = msg2.empty() ? 14 : 24;
-    const int cmdX = 10, cmdY = 124, cmdW = 70, cmdH = CMD_COUNT * 10 + 4;
+    const int cmdX = 10, cmdY = 114, cmdW = 70, cmdH = CMD_COUNT * 10 + 4;
     const int listX = 84, listW = SCREEN_WIDTH - 94, listBottom = cmdY + cmdH;
     const int partyX = 10, partyY = 204, partyW = SCREEN_WIDTH - 20, partyH = 30;
     const int colW = partyW / 2;
 
-    bool commandUi = sScene.ui == Ui::Command || sScene.ui == Ui::Skills || sScene.ui == Ui::TargetEnemy ||
-                     sScene.ui == Ui::TargetAlly;
+    bool commandUi = sScene.ui == Ui::Command || sScene.ui == Ui::Skills || sScene.ui == Ui::Items ||
+                     sScene.ui == Ui::TargetEnemy || sScene.ui == Ui::TargetAlly;
+    std::vector<ConsumableId> owned = sScene.ui == Ui::Items ? OwnedItems() : std::vector<ConsumableId>();
     const Combatant& active = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
     int listRows = 0;
     if (sScene.ui == Ui::Skills) {
         listRows = (int)active.skills.size() - 1;
+    } else if (sScene.ui == Ui::Items) {
+        listRows = (int)owned.size();
     } else if (sScene.ui == Ui::TargetEnemy) {
         listRows = (int)b.Enemies().size() + 2; // + two lines of affinity info
     } else if (sScene.ui == Ui::TargetAlly) {
@@ -1091,6 +1210,13 @@ void Battle_DrawUi(PlayState* play) {
                           : sk.target == TargetType::OneAlly    ? "One ally"
                                                                 : "Party";
         info3 = std::string(sk.heal ? "Heals " : "Power ") + std::to_string(sk.power) + "  " + who;
+    }
+    if (sScene.ui == Ui::Items && sScene.showSkillInfo && !owned.empty()) {
+        showInfo = true;
+        const ConsumableDef& def =
+            ConsumableOf(owned[std::clamp(sScene.itemCursor, 0, (int)owned.size() - 1)]);
+        infoLines = WrapText(def.description, infoChars);
+        info3 = def.effect.target == TargetType::AllAllies ? "Party" : "One ally";
     }
     const int infoH = (int)infoLines.size() * 9 + 16; // description lines + the stats line
     const int infoY = listY - infoH - 4;
@@ -1225,8 +1351,21 @@ void Battle_DrawUi(PlayState* play) {
             text(listX + 4, infoY + 3 + (int)i * 9, infoLines[i], 235, 235, 235);
         }
         text(listX + 4, infoY + 5 + (int)infoLines.size() * 9, info3, 150, 200, 255);
-    } else if (sScene.ui == Ui::Skills) {
+    } else if (sScene.ui == Ui::Skills || sScene.ui == Ui::Items) {
         text(listX + listW - 9 * 8, listY - 10, "Z: Info", 150, 150, 150);
+    }
+
+    if (sScene.ui == Ui::Items) {
+        for (int i = 0; i < (int)owned.size(); i++) {
+            const ConsumableDef& def = ConsumableOf(owned[i]);
+            bool sel = i == sScene.itemCursor;
+            int y = listY + 3 + i * 10;
+            text(listX + 2, y, std::string(sel ? ">" : " ") + def.name, sel ? 255 : 210, sel ? 230 : 210,
+                 sel ? 90 : 210);
+            std::string count = "x" + std::to_string(Party_Consumables()[(size_t)def.id]);
+            text(listX + listW - 4 - (int)count.size() * 8, y, count, sel ? 255 : 210, sel ? 230 : 210,
+                 sel ? 90 : 210);
+        }
     }
 
     if (sScene.ui == Ui::TargetEnemy) {
@@ -1255,8 +1394,9 @@ void Battle_DrawUi(PlayState* play) {
         const std::vector<Combatant>& p = b.Party();
         for (int i = 0; i < (int)p.size(); i++) {
             char line[40];
-            snprintf(line, sizeof(line), "%-8s HP %3d/%3d", p[i].name.c_str(), p[i].hp, p[i].maxHp);
-            option(listX + 2, listY + 3 + i * 10, line, i == sScene.targetCursor, p[i].Alive());
+            snprintf(line, sizeof(line), "%-8s HP %3d/%3d %s", p[i].name.c_str(), p[i].hp, p[i].maxHp,
+                     AilmentTag(p[i].ailment));
+            option(listX + 2, listY + 3 + i * 10, line, i == sScene.targetCursor, p[i].Alive() || TargetingFallen());
         }
     }
 
@@ -1266,7 +1406,14 @@ void Battle_DrawUi(PlayState* play) {
         char line[40];
         snprintf(line, sizeof(line), "%-6s Lv%d", c.name.c_str(), c.level);
         u8 shade = c.Alive() ? 255 : 110;
-        text(x, partyY + 4, line, shade, shade, shade);
+        if (c.ailment != Ailment::None && c.Alive()) {
+            // An ailment replaces the level, coloured: purple poison, orange burn
+            bool poison = c.ailment == Ailment::Poison;
+            snprintf(line, sizeof(line), "%-6s %s", c.name.c_str(), AilmentTag(c.ailment));
+            text(x, partyY + 4, line, poison ? 200 : 255, poison ? 130 : 150, poison ? 255 : 70);
+        } else {
+            text(x, partyY + 4, line, shade, shade, shade);
+        }
         snprintf(line, sizeof(line), "HP%3d MP%3d", c.hp, c.mp);
         text(x, partyY + 15, line, 200, 220, 200);
     }

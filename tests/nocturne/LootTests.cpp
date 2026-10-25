@@ -1,7 +1,7 @@
-// Nocturne of Time: unit tests for loot generation and gear. Not part of the game build.
+// Nocturne of Time: unit tests for loot generation, gear and consumables. Not part of the game build.
 // Build and run (from this folder):
 //   N=../../soh/soh/Enhancements/NocturneOfTime
-//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
+//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
 //   ./loot_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
@@ -249,6 +249,46 @@ static void TestParty() {
     CHECK(Party_Members().empty() && Party_Bag().empty());
 }
 
+static void TestConsumables() {
+    std::printf("Consumables\n");
+    Party_Reset();
+    Party_EnsureCreated(5);
+    auto& counts = Party_Consumables();
+    CHECK(counts[(size_t)ConsumableId::RedPotion] == 3 && counts[(size_t)ConsumableId::HylianHerb] == 1);
+
+    // Using a potion on someone at full HP does nothing and costs nothing
+    CHECK(Party_UseConsumable(ConsumableId::RedPotion, 0).empty());
+    CHECK(counts[(size_t)ConsumableId::RedPotion] == 3);
+    Party_Members()[0].base.hp = 10;
+    std::vector<std::string> r = Party_UseConsumable(ConsumableId::RedPotion, 0);
+    CHECK(!r.empty() && Party_Members()[0].base.hp == 70 && counts[(size_t)ConsumableId::RedPotion] == 2);
+
+    // Poison carries on the party and is cured by an herb; battle-only items are refused outside battle
+    Party_Members()[1].base.ailment = Ailment::Poison;
+    CHECK(!Party_UseConsumable(ConsumableId::HylianHerb, 1).empty());
+    CHECK(Party_Members()[1].base.ailment == Ailment::None && counts[(size_t)ConsumableId::HylianHerb] == 0);
+    Party_AddConsumable(ConsumableId::BottledFairy);
+    CHECK(Party_UseConsumable(ConsumableId::BottledFairy, 0).empty());
+
+    // Carry limit
+    CHECK(Party_AddConsumable(ConsumableId::GreenPotion, 50) == kMaxCarry);
+    CHECK(Party_AddConsumable(ConsumableId::GreenPotion) == 0);
+
+    // Drops: every kind turns up, Red Potions most often, Blue Potions rarely
+    std::map<ConsumableId, int> seen;
+    LootRng rng = Rng();
+    for (int i = 0; i < 20000; i++) {
+        seen[RollConsumable(rng)]++;
+    }
+    CHECK((int)seen.size() == (int)ConsumableId::Count);
+    CHECK(seen[ConsumableId::RedPotion] > seen[ConsumableId::HylianHerb]);
+    CHECK(seen[ConsumableId::BluePotion] < 20000 * 0.05);
+    for (size_t i = 0; i < (size_t)ConsumableId::Count; i++) {
+        CHECK(!ConsumableOf((ConsumableId)i).name.empty() && !ConsumableOf((ConsumableId)i).description.empty());
+    }
+    Party_Reset();
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -259,6 +299,7 @@ int main() {
     TestDescriptions();
     TestParty();
     TestLore();
+    TestConsumables();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

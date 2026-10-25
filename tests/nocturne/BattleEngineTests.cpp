@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <deque>
 #include <array>
+#include <cmath>
 #include <random>
 
 using namespace Nocturne;
@@ -294,6 +295,107 @@ static void TestLevelUpPoints() {
     std::printf("  Link at level 5: St %d Ma %d Vi %d Ag %d Lu %d\n", a.st, a.ma, a.vi, a.ag, a.lu);
 }
 
+static void TestAilments() {
+    std::printf("Ailments\n");
+    // A Skulltula whose only move is a sure-fire poison bite
+    Combatant spider = MakeEnemy(EnemyKind::Skulltula);
+    Skill fang;
+    fang.name = "Venom Fang";
+    fang.element = Element::Pierce;
+    fang.power = 4;
+    fang.inflict = Ailment::Poison;
+    fang.inflictChance = 1.0f;
+    spider.skills = { fang };
+    Battle b({ MakeLink(5), MakeSaria(5) }, { spider }, Steady());
+    b.Guard();
+    b.Guard();
+    CHECK(b.Phase() == BattlePhase::EnemyTurn);
+    Events ev = b.EnemyAct();
+    int poisoned = -1;
+    for (int i = 0; i < 2; i++) {
+        if (b.Party()[i].ailment == Ailment::Poison) {
+            poisoned = i;
+        }
+    }
+    CHECK(poisoned >= 0);
+    // The enemy turn ended, so the party's turn began with a poison tick
+    CHECK(b.Phase() == BattlePhase::PartyCommand);
+    bool tick = false;
+    for (const BattleEvent& e : ev) {
+        tick |= e.type == BattleEvent::Type::Hit && e.text.find("poison") != std::string::npos;
+    }
+    CHECK(tick);
+
+    // Poison never takes the last HP
+    Combatant weak = MakeLink(5);
+    weak.hp = 1;
+    weak.ailment = Ailment::Poison;
+    Battle b2({ weak, MakeSaria(5) }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(b2.Party()[0].hp == 1 && b2.Party()[0].Alive());
+    CHECK(AilmentDamage(Ailment::Poison, 120) == 10 && AilmentDamage(Ailment::Burn, 5) == 1);
+
+    // Burn wears off after a few of the victim's turns
+    Combatant burned = MakeSaria(5);
+    burned.ailment = Ailment::Burn;
+    burned.ailmentTurns = kBurnTurns;
+    Battle b3({ MakeLink(5), burned }, { MakeEnemy(EnemyKind::DekuBaba) }, [] { return 0.99f; }); // enemies miss
+    for (int round = 0; round < kBurnTurns + 1 && b3.Phase() == BattlePhase::PartyCommand; round++) {
+        b3.Guard();
+        b3.Guard();
+        while (b3.Phase() == BattlePhase::EnemyTurn) {
+            b3.EnemyAct();
+        }
+    }
+    CHECK(b3.Party()[1].ailment == Ailment::None);
+}
+
+static void TestItems() {
+    std::printf("Items\n");
+    ItemEffect potion;
+    potion.hp = 60;
+    ItemEffect revive;
+    revive.revive = 0.5f;
+    ItemEffect herb;
+    herb.cures = Ailment::Poison;
+    ItemEffect milk;
+    milk.hp = 40;
+    milk.target = TargetType::AllAllies;
+
+    Combatant hurt = MakeSaria(5);
+    hurt.hp = 10;
+    Combatant down = MakeSaria(5);
+    down.hp = 0;
+    Battle b({ MakeLink(5), hurt }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(!b.CanUseItem(potion, 0)); // Link is at full HP: it would do nothing
+    CHECK(b.CanUseItem(potion, 1));
+    Events ev = b.UseItem("Red Potion", potion, 1);
+    CHECK(!ev.empty() && HasEvent(ev, BattleEvent::Type::Heal));
+    CHECK(b.Party()[1].hp == std::min(70, b.Party()[1].maxHp));
+    CHECK(b.Icons().Total() == 1); // one icon used
+
+    // Revival only works on the fallen; potions don't raise the dead
+    Battle b2({ MakeLink(5), down }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(!b2.CanUseItem(potion, 1));
+    CHECK(!b2.CanUseItem(revive, 0));
+    CHECK(b2.CanUseItem(revive, 1));
+    b2.UseItem("Bottled Fairy", revive, 1);
+    CHECK(b2.Party()[1].hp == (int)std::lround(b2.Party()[1].maxHp * 0.5f));
+
+    // Cures, party-wide items, and use outside battle
+    Combatant sick = MakeLink(5);
+    sick.ailment = Ailment::Poison;
+    CHECK(ItemHelps(herb, sick) && !ItemHelps(herb, MakeLink(5)));
+    std::vector<std::string> msgs;
+    CHECK(ApplyItemEffect(herb, sick, &msgs) && sick.ailment == Ailment::None && msgs.size() == 1);
+    CHECK(!ApplyItemEffect(herb, sick, nullptr));
+    Combatant a = MakeLink(5), c = MakeSaria(5);
+    a.hp = 5;
+    Battle b3({ a, c }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(b3.CanUseItem(milk, -1));
+    b3.UseItem("Lon Lon Milk", milk, -1);
+    CHECK(b3.Party()[0].hp == 45 && b3.Party()[1].hp == b3.Party()[1].maxHp);
+}
+
 static void TestRandomBattlesFinish() {
     std::printf("Random battles always finish\n");
     std::mt19937 gen(1234);
@@ -356,6 +458,8 @@ int main() {
     TestSkillCosts();
     TestLevels();
     TestLevelUpPoints();
+    TestAilments();
+    TestItems();
     TestRandomBattlesFinish();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;
