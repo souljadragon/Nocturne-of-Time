@@ -31,7 +31,7 @@ namespace {
 
 constexpr f32 kTileSize = 80.0f;    // must match the crawler's step
 constexpr f32 kFloorHeight = 120.0f; // vertical size of one map floor
-constexpr f32 kWallProbe = 60.0f;   // a wall closer than this from the tile centre counts as that side's wall
+constexpr f32 kWallProbe = 44.0f;   // walls within this of the tile centre (half a tile + a little) count as that side's wall
 
 // Directions match the crawler's facing: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X.
 struct Cell {
@@ -56,6 +56,12 @@ using FloorMap = std::unordered_map<CellKey, Cell, CellKeyHash>;
 
 std::unordered_map<s16, FloorMap> sMaps; // per scene
 bool sLarge = false;
+
+// Last tile Link stood on, to clear walls he walks straight through
+bool sHasLast = false;
+s16 sLastScene = -1;
+u32 sLastFrame = 0; // gameplay frame of the last update; a gap means a door, cutscene or climb happened
+
 
 CellKey KeyFor(const Vec3f& pos) {
     return { (s32)floorf(pos.x / kTileSize + 0.5f), (s32)floorf(pos.z / kTileSize + 0.5f),
@@ -127,7 +133,7 @@ static void DrawMap(PlayState* play) {
     CellKey here = KeyFor(player->actor.world.pos);
 
     const s32 radius = sLarge ? 12 : 4;        // tiles shown each side of Link
-    const s32 cellPx = sLarge ? 8 : 7;          // screen pixels per tile
+    const s32 cellPx = sLarge ? 8 : 6;          // screen pixels per tile
     const s32 sizePx = (2 * radius + 1) * cellPx;
     s32 x0, y0;
     if (sLarge) {
@@ -230,20 +236,55 @@ void RegisterAutomap() {
     COND_HOOK(OnLoadGame, enabled, [](int32_t) {
         sMaps.clear();
         sLarge = false;
+        sHasLast = false;
     });
 }
 
 } // namespace
 
 void Automap_Update(PlayState* play, Player* player) {
+    static CellKey sLastKey = { 0, 0, 0 };
+
     if (!(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) {
+        sHasLast = false;
         return;
     }
     FloorMap& cells = sMaps[play->sceneNum];
     CellKey key = KeyFor(player->actor.world.pos);
+
     if (cells.find(key) == cells.end()) {
-        cells[key] = ScanCell(play, player->actor.world.pos);
+        // Scan from the tile centre so the result doesn't depend on where in the tile Link stands
+        Vec3f centre = { key.x * kTileSize, player->actor.world.pos.y, key.z * kTileSize };
+        cells[key] = ScanCell(play, centre);
     }
+
+    // Walking from one tile straight into its neighbour proves there's no wall between them
+    if (sHasLast && sLastScene == play->sceneNum && sLastFrame + 1 == play->gameplayFrames && sLastKey.floor == key.floor && !(sLastKey == key)) {
+        s32 dx = key.x - sLastKey.x;
+        s32 dz = key.z - sLastKey.z;
+        s32 side = -1; // side of the last tile that was crossed
+        if (dx == 0 && dz == 1) {
+            side = 0;
+        } else if (dx == 1 && dz == 0) {
+            side = 1;
+        } else if (dx == 0 && dz == -1) {
+            side = 2;
+        } else if (dx == -1 && dz == 0) {
+            side = 3;
+        }
+        auto last = cells.find(sLastKey);
+        if (side >= 0 && last != cells.end()) {
+            s32 opposite = (side + 2) & 3;
+            last->second.walls &= ~(1 << side);
+            last->second.doors &= ~(1 << side);
+            cells[key].walls &= ~(1 << opposite);
+            cells[key].doors &= ~(1 << opposite);
+        }
+    }
+    sLastKey = key;
+    sLastScene = play->sceneNum;
+    sLastFrame = play->gameplayFrames;
+    sHasLast = true;
 }
 
 void Automap_ToggleLarge() {
