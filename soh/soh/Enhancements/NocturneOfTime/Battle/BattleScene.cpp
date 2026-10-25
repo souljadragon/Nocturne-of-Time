@@ -575,7 +575,10 @@ void QueueRewards() {
         }
     }
 
-    if (sScene.boss) {
+    if (sScene.boss && BossGate_IsRematch()) {
+        sScene.queue.push_back(HeldMessage("Queen Gohma falls once more.", 0x58D85400u));
+        Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS_CLEAR);
+    } else if (sScene.boss) {
         // Heart Container: everyone's max HP grows for good, and they're healed
         for (PartyMember& m : members) {
             m.base.maxHp += kHeartContainerHp;
@@ -1199,7 +1202,8 @@ void Battle_OnStep(PlayState* play, Player* player) {
 }
 
 void Battle_FieldTick(PlayState* play, Player* player) {
-    if (!BossGate_InBossRoom(play) || Battle_IsActive() || sBossDone || BossGate_IsCleared() ||
+    if (!BossGate_InBossRoom(play) || Battle_IsActive() || sBossDone ||
+        (BossGate_IsCleared() && !BossGate_IsRematch()) ||
         play->transitionTrigger != TRANS_TRIGGER_OFF) {
         return;
     }

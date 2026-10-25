@@ -30,6 +30,8 @@ void BossGate_Load(const nlohmann::json& data);
 std::string BossGate_OnVictory(PlayState* play);
 // Gohma is beaten.
 void BossGate_SetCleared();
+// A rematch through the cleared gate: the fight happens again, without a second Heart Container.
+bool BossGate_IsRematch();
 
 // ---- On the dungeon floor ----
 // Every frame the crawler runs in the dungeon: finds the web and makes the gate sparkle.

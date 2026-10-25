@@ -32,6 +32,7 @@ bool sHaveEntryPos = false; // last resort: where Link arrived
 Vec3f sEntryPos = { 0.0f, 0.0f, 0.0f };
 
 enum class Prompt { None, Sealed, Ask, Cleared };
+bool sRematch = false; // set by the cleared gate's warp, until the next return from the chamber
 Prompt sPrompt = Prompt::None;
 bool sStillOnGate = false; // after a prompt, stepping off and back on asks again
 
@@ -213,8 +214,9 @@ bool BossGate_PromptOpen() {
 void BossGate_Update(PlayState* play, void* inputPtr) {
     Input* input = (Input*)inputPtr;
     u16 press = input->press.button;
-    if (sPrompt == Prompt::Ask) {
+    if (sPrompt == Prompt::Ask || sPrompt == Prompt::Cleared) {
         if (press & BTN_A) {
+            sRematch = sPrompt == Prompt::Cleared;
             sPrompt = Prompt::None;
             Sfx_PlaySfxCentered(NA_SE_SY_DECIDE);
             BossGate_WarpToBoss(play);
@@ -253,7 +255,8 @@ bool BossGate_DrawPrompt(Retro::Painter& p, int x, int y, int w) {
         case Prompt::Cleared:
         default:
             line1 = "The Heart of the Tree is at peace.";
-            keys = "A:OK";
+            line2 = "Face Queen Gohma again?";
+            keys = "A:YES B:NO";
             c = Green;
             break;
     }
@@ -281,7 +284,12 @@ void BossGate_WarpToBoss(PlayState* play) {
     Warp(play, ENTR_DEKU_TREE_BOSS_ENTRANCE);
 }
 
+bool BossGate_IsRematch() {
+    return sRematch;
+}
+
 void BossGate_ReturnToDungeon(PlayState* play) {
+    sRematch = false;
     Warp(play, ENTR_DEKU_TREE_ENTRANCE);
 }
 
