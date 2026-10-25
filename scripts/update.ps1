@@ -20,6 +20,9 @@ if ($Clean) {
     Write-Host "== Clearing CMake settings" -ForegroundColor Cyan
     Remove-Item -Force -ErrorAction SilentlyContinue .\build\x64\CMakeCache.txt
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue .\build\x64\CMakeFiles
+    # Downloaded dependencies (spdlog, ImGui...) keep their own small CMake caches; clear those too
+    Get-ChildItem -Directory -ErrorAction SilentlyContinue .\build\x64\_deps -Filter "*-subbuild" |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "== Running CMake setup" -ForegroundColor Cyan
