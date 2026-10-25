@@ -165,10 +165,31 @@ macro(vcpkg_install_packages)
         set(ENV{VCPKG_DEFAULT_TRIPLET} "${VCPKG_TRIPLET}")
     endif()
 
-    execute_process(
-        COMMAND ${VCPKG_EXEC} install ${ARGN}
-        WORKING_DIRECTORY ${VCPKG_ROOT}
-        )
+    # Nocturne of Time: only run `vcpkg install` until it has succeeded once for this package list.
+    # Reconfigures triggered from inside a Visual Studio build (ZERO_CHECK) re-ran it in MSBuild's
+    # environment, where vcpkg decided to rebuild packages, failed ("batch label ... VCEnd"), and left
+    # SDL2 missing. Pass -DAUTOMATE_VCPKG_FORCE_INSTALL=ON to run it again anyway.
+    string(JOIN " " _automate_vcpkg_pkgs ${ARGN})
+    set(_automate_vcpkg_stamp "${VCPKG_ROOT}/installed/.automate-vcpkg-${VCPKG_TRIPLET}.stamp")
+    set(_automate_vcpkg_prev "")
+    if(EXISTS "${_automate_vcpkg_stamp}")
+        file(READ "${_automate_vcpkg_stamp}" _automate_vcpkg_prev)
+    endif()
+
+    if(NOT AUTOMATE_VCPKG_FORCE_INSTALL AND "${_automate_vcpkg_prev}" STREQUAL "${_automate_vcpkg_pkgs}")
+        message(STATUS "vcpkg packages already installed, skipping `vcpkg install`")
+    else()
+        execute_process(
+            COMMAND ${VCPKG_EXEC} install ${ARGN}
+            WORKING_DIRECTORY ${VCPKG_ROOT}
+            RESULT_VARIABLE _automate_vcpkg_result
+            )
+        if(_automate_vcpkg_result EQUAL 0)
+            file(WRITE "${_automate_vcpkg_stamp}" "${_automate_vcpkg_pkgs}")
+        else()
+            message(WARNING "vcpkg install failed (${_automate_vcpkg_result}); it will be retried on the next configure")
+        endif()
+    endif()
 endmacro()
     
 # MIT License
