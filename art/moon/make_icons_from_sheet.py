@@ -62,6 +62,97 @@ def cut_disc(sheet, cx, cy, r, inset=2):
     return crop
 
 
+# ---- Phase shadows ----------------------------------------------------------------------------------------
+# The drawn sheet shades 3/8, Half and 5/8 identically (straight down the middle) and leaves 6/8 and 7/8 fully lit.
+# A real moon lit k/8 of the way has its terminator on an ellipse: lit where x > a * sqrt(1 - y^2), with
+# a = 1 - 2k (x, y in moon radii, light from the right). We relight or darken each face to that curve, using the
+# shading the artist drew on the Half Moon (fitted as shadow = m * lit + c per colour channel).
+TERMINATOR = {"2of8": 0.5, "3of8": 0.25, "5of8": -0.25, "6of8": -0.5, "7of8": -0.75}
+# Where the drawing's own shadow ends (same form; None = fully lit). Measured from the sheet.
+DRAWN = {"2of8": 0.71, "3of8": -0.03, "half": -0.03, "5of8": -0.03, "6of8": None, "7of8": None}
+SOFT = 2.5  # terminator softness, source pixels
+
+
+def fit_shadow(half_disc):
+    """Per-channel tone curves between the lit and the shadowed side of the drawn Half Moon, by matching their
+    colour distributions (quantiles): robust even though the face isn't perfectly symmetric."""
+    import numpy as np
+    a = np.asarray(half_disc.convert("RGB")).astype(float)
+    n = a.shape[0]
+    r = n / 2
+    ys, xs = np.mgrid[0:n, 0:n]
+    dx, dy = (xs + 0.5 - r) / r, (ys + 0.5 - r) / r
+    inside = dx * dx + dy * dy < 0.85
+    lit = a[inside & (dx > 0.08)]
+    dark = a[inside & (dx < -0.12)]
+    qs = np.linspace(0, 100, 101)
+    return [(np.percentile(lit[:, ch], qs), np.percentile(dark[:, ch], qs)) for ch in range(3)]
+
+
+def _map(values, src, dst):
+    import numpy as np
+    out = np.empty_like(values)
+    for ch in range(3):
+        s_q, d_q = src[ch], dst[ch]
+        # make the curve strictly increasing so interpolation is well defined
+        s_q = s_q + np.arange(len(s_q)) * 1e-3
+        d_q = d_q + np.arange(len(d_q)) * 1e-3
+        out[..., ch] = np.interp(values[..., ch], s_q, d_q)
+    return out
+
+
+def reshade(disc, name, fit):
+    import numpy as np
+    if name not in TERMINATOR:
+        return disc
+    a = np.asarray(disc).astype(float)
+    rgb = a[..., :3]
+    n = a.shape[0]
+    r = n / 2
+    ys, xs = np.mgrid[0:n, 0:n]
+    dx, dy = (xs + 0.5 - r) / r, (ys + 0.5 - r) / r
+    w = np.sqrt(np.clip(1 - dy * dy, 0, 1))
+    lit_q = [f[0] for f in fit]
+    dark_q = [f[1] for f in fit]
+
+    drawn = DRAWN.get(name)
+    drawn_lit = np.ones((n, n), bool) if drawn is None else dx > drawn * w
+    if drawn is not None and name != "2of8":
+        # The drawing's own terminator is a hard edge with a bright rim: across it, use the lit pixels just to
+        # its right instead, so no seam is left where the old shadow ended (lit or shadowed)
+        edge = drawn * w * r + r - 0.5  # x of the drawn edge per row (pixels)
+        band = np.abs(xs - edge) < 4
+        src_x = np.clip((edge + 5).round().astype(int), 0, n - 1)
+        rgb = rgb.copy()
+        rgb[band] = rgb[ys[band], src_x[band]]
+        drawn_lit = drawn_lit | band
+    if drawn is not None:
+        # this face's own shadow tones (2/8's is darker and greener than the Half Moon's)
+        own = rgb[(~drawn_lit) & (dx * dx + dy * dy < 0.85)]
+        if len(own) > 500:
+            dark_q = [np.percentile(own[:, ch], np.linspace(0, 100, 101)) for ch in range(3)]
+    # Relight by brightness, taking the colour from the lit moon's own palette (average lit colour for each
+    # brightness): a per-channel curve would amplify the drawing's colour noise in the dark side
+    lum = rgb @ np.array([0.3, 0.59, 0.11])
+    ramp = np.arange(101) * 1e-3
+    lit_lum = np.stack(lit_q, 1) @ np.array([0.3, 0.59, 0.11]) + ramp
+    dark_lum = np.stack(dark_q, 1) @ np.array([0.3, 0.59, 0.11]) + ramp
+    target = np.interp(lum, dark_lum, lit_lum)
+    relit = np.stack([np.interp(target, lit_lum, lit_q[ch]) for ch in range(3)], -1)
+    lit_ver = np.where(drawn_lit[..., None], rgb, relit)      # relight the shadow
+    if name == "7of8":
+        # the violet face keeps its hue in shadow
+        darkened = rgb * np.array([0.26, 0.22, 0.34])
+    else:
+        darkened = _map(rgb, lit_q, dark_q)
+    shadow_ver = np.where(drawn_lit[..., None], darkened, rgb)   # darken the light
+    # coverage of the light, softened over a few pixels across the terminator
+    t = np.clip((dx - TERMINATOR[name] * w) * r / SOFT + 0.5, 0, 1)[..., None]
+    out = a.copy()
+    out[..., :3] = shadow_ver + (lit_ver - shadow_ver) * t
+    return Image.fromarray(np.clip(out, 0, 255).round().astype("uint8"), "RGBA")
+
+
 def glow_eyes(disc, eyes, strength):
     """Make the eyes glow: whites/irises shift to violet (white-hot in the last phases), pupils blaze at the
     top end, and a soft violet halo surrounds each eye (which is all closed eyes get)."""
@@ -148,7 +239,9 @@ def make_icon(disc, canvas, disc_px, glow):
 
 def main(sheet_path):
     sheet = Image.open(sheet_path).convert("RGB")
-    discs = {k: glow_eyes(cut_disc(sheet, *CIRCLES[k]), EYES[k], EYE_GLOW[k]) for k in ORDER}
+    raw = {k: cut_disc(sheet, *CIRCLES[k]) for k in ORDER}
+    fit = fit_shadow(raw["half"])
+    discs = {k: glow_eyes(reshade(raw[k], k, fit), EYES[k], EYE_GLOW[k]) for k in ORDER}
 
     for canvas, disc_px in ((32, 28), (48, 42)):
         icons = [make_icon(discs[k], canvas, disc_px, GLOW.get(k, 0)) for k in ORDER]
