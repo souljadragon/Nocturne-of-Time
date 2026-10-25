@@ -1,12 +1,13 @@
-// Nocturne of Time: unit tests for loot generation, gear and consumables. Not part of the game build.
+// Nocturne of Time: unit tests for loot generation, gear, consumables and the moon. Not part of the game build.
 // Build and run (from this folder):
 //   N=../../soh/soh/Enhancements/NocturneOfTime
-//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
+//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Moon/Moon.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
 //   ./loot_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Loot/Loot.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Party.h"
+#include "../../soh/soh/Enhancements/NocturneOfTime/Moon/Moon.h"
 
 #include <array>
 #include <cstdio>
@@ -289,6 +290,37 @@ static void TestConsumables() {
     Party_Reset();
 }
 
+static void TestMoon() {
+    std::printf("Moon phases\n");
+    Moon_Reset();
+    CHECK(Moon_Phase() == MoonPhase::New && Moon_Fullness() == 0.0f && Moon_EncounterScale() == 1.0f);
+    // New -> Full over 7 phases, back down to New over 7 more; each phase lasts kMoonStepsPerPhase steps
+    std::vector<int> seen;
+    int changes = 0;
+    for (int step = 0; step < kMoonStepsPerPhase * kMoonCycleLength; step++) {
+        if (Moon_OnStep()) {
+            changes++;
+            seen.push_back((int)Moon_Phase());
+        }
+    }
+    CHECK(changes == kMoonCycleLength);
+    std::vector<int> expected = { 1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1, 0 };
+    CHECK(seen == expected);
+    CHECK(Moon_Phase() == MoonPhase::New);
+
+    for (int i = 0; i < kMoonStepsPerPhase * 7; i++) {
+        Moon_OnStep();
+    }
+    CHECK(Moon_Phase() == MoonPhase::Full && Moon_Fullness() == 1.0f && !Moon_Waxing());
+    CHECK(Moon_EncounterScale() > 1.59f && Moon_LootLuck() == 1.0f);
+    // A Full Moon tips common drops toward blue and purple, still never Legendary
+    std::array<float, 4> full = RarityOdds(DropSource::Common, Moon_LootLuck());
+    std::array<float, 4> dark = RarityOdds(DropSource::Common, 0.0f);
+    CHECK(full[1] > dark[1] && full[2] > dark[2] && full[3] == 0.0f);
+    CHECK(std::string(MoonPhaseName(MoonPhase::Half)) == "Half Moon");
+    Moon_Reset();
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -300,6 +332,7 @@ int main() {
     TestParty();
     TestLore();
     TestConsumables();
+    TestMoon();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

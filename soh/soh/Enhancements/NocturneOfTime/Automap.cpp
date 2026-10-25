@@ -11,6 +11,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ShipInit.hpp"
 #include "Automap.h"
+#include "Moon/MoonHud.h"
 #include "DungeonCrawler.h"
 #include "Battle/BattleScene.h"
 #include "soh/frame_interpolation.h"
@@ -233,6 +234,7 @@ void RegisterAutomap() {
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
             if (!Battle_IsActive()) { // battles draw their own interface (VB_DRAW_INTERFACE)
                 DrawMap(play);
+                MoonHud_DrawField(play);
             }
             *should = false;
         }

@@ -11,6 +11,8 @@
 #include "BattleData.h"
 #include "BattleEngine.h"
 #include "BattleEnemyActor.h"
+#include "../Moon/Moon.h"
+#include "../Moon/MoonHud.h"
 #include "../Loot/Loot.h"
 #include "../Party.h"
 #include "../DungeonCrawler.h"
@@ -51,7 +53,6 @@ constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
 constexpr float kDropChance = 0.35f; // per defeated enemy
 constexpr int kMaxDrops = 2;         // per battle
-constexpr float kLootLuck = 0.0f;    // rarity luck; the moon phase will drive this
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
@@ -460,7 +461,7 @@ void QueueRewards() {
     LootRng rng = [] { return Rand_ZeroOne() * 0.99999f; };
     for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops; i++) {
         if (Rand_ZeroOne() < kDropChance) {
-            Item item = RollItem(itemLevel, DropSource::Common, kLootLuck, rng); // only common enemies so far
+            Item item = RollItem(itemLevel, DropSource::Common, Moon_LootLuck(), rng); // only common enemies so far
             Party_Bag().push_back(item);
             drops++;
             BattleEvent found;
@@ -1022,7 +1023,10 @@ void Battle_OnStep(PlayState* play, Player* player) {
     if (Battle_IsActive()) {
         return;
     }
-    sDanger += kDangerStepMin + (int)(Rand_ZeroOne() * (kDangerStepMax - kDangerStepMin + 1) * 0.9999f);
+    MoonHud_OnStep();
+    // The fuller the moon, the faster danger builds
+    int gain = kDangerStepMin + (int)(Rand_ZeroOne() * (kDangerStepMax - kDangerStepMin + 1) * 0.9999f);
+    sDanger += (int)(gain * Moon_EncounterScale() + 0.5f);
     if (sDanger >= kDangerTrigger) {
         StartBattle(play, player);
     }
@@ -1302,7 +1306,7 @@ void Battle_DrawUi(PlayState* play) {
 
     text(10 + icons.Total() * 13 + 4, iconY + 1, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
     if (sScene.autoBattle) {
-        text(SCREEN_WIDTH - 10 - 13 * 8, iconY + 1, "AUTO  B:Stop", 110, 230, 120);
+        text(SCREEN_WIDTH - 10 - 24 - 8 - 12 * 8, iconY + 1, "AUTO  B:Stop", 110, 230, 120);
     }
 
     if (sScene.showingMessage) {
@@ -1442,6 +1446,7 @@ void Battle_DrawUi(PlayState* play) {
     GfxPrint_Destroy(&printer);
     OVERLAY_DISP = gfx;
     CLOSE_DISPS(play->state.gfxCtx);
+    MoonHud_DrawBattle(play);
 }
 
 static RegisterShipInitFunc initFunc(RegisterBattleScene, { CVAR_CRAWLER_NAME });
