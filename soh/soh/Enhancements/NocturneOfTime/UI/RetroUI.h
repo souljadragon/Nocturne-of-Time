@@ -61,7 +61,7 @@ class Painter {
     void Image(const uint8_t* rgba32, int texW, int texH, int x, int y, int w, int h, uint8_t alpha = 255);
     // The Famicom moon sprite for a phase (0 = New .. 7 = Full)
     void Moon(int phase, int x, int y, int size);
-    // A party member's portrait (64 or 32 source), false if there is none for that name
+    // A party member's Famicom-style portrait (48px source) at size x size, false if there is none
     bool Portrait(const std::string& name, int x, int y, int size);
 
   private:

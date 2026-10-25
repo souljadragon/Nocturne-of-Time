@@ -253,12 +253,11 @@ void Painter::Moon(int phase, int x, int y, int size) {
 }
 
 bool Painter::Portrait(const std::string& name, int x, int y, int size) {
-    int src = size >= 48 ? 64 : 32;
-    const uint8_t* tex = RetroPortrait(name.c_str(), src);
+    const uint8_t* tex = RetroPortrait(name.c_str());
     if (tex == nullptr) {
         return false;
     }
-    Image(tex, src, src, x, y, size, size);
+    Image(tex, kRetroPortraitSize, kRetroPortraitSize, x, y, size, size);
     return true;
 }
 

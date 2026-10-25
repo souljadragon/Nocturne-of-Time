@@ -22,9 +22,9 @@ def emit(var, path, size):
     lines.append("};")
 
 
+# Famicom-style portraits (style A: 48px, a few NES colours), from portraits/make_famicom_portraits.py
 for name in PORTRAITS:
-    emit(f"gRetroPortrait64_{name}", os.path.join(HERE, "portraits", f"portrait_{name}_64.png"), 64)
-    emit(f"gRetroPortrait32_{name}", os.path.join(HERE, "portraits", f"portrait_{name}_32.png"), 32)
+    emit(f"gRetroPortrait_{name}", os.path.join(HERE, "portraits", "famicom", f"portrait_A_{name}_48.png"), 48)
 for name in MOONS:
     emit(f"gRetroMoon_{name}", os.path.join(HERE, "moon", "famicom", f"moon_famicom_{name}_32.png"), 32)
 
@@ -32,12 +32,13 @@ lines.append("")
 lines.append("// Famicom moon sprites (32x32), New Moon to Full Moon")
 lines.append("static const uint8_t* const kRetroMoons[8] = { " + ", ".join(f"gRetroMoon_{m}" for m in MOONS) + " };")
 lines.append("")
-lines.append("// Portrait for a party member by name (lower case match), or nullptr. size 64 or 32.")
-lines.append("inline const uint8_t* RetroPortrait(const char* name, int size) {")
-lines.append("    struct Entry { const char* name; const uint8_t* p64; const uint8_t* p32; };")
+lines.append("constexpr int kRetroPortraitSize = 48;")
+lines.append("// 48x48 portrait for a party member by name (case-insensitive), or nullptr.")
+lines.append("inline const uint8_t* RetroPortrait(const char* name) {")
+lines.append("    struct Entry { const char* name; const uint8_t* tex; };")
 lines.append("    static const Entry kEntries[] = {")
 for name in PORTRAITS:
-    lines.append(f'        {{ "{name}", gRetroPortrait64_{name}, gRetroPortrait32_{name} }},')
+    lines.append(f'        {{ "{name}", gRetroPortrait_{name} }},')
 lines.append("    };")
 lines.append("    for (const Entry& e : kEntries) {")
 lines.append("        size_t n = strlen(e.name);")
@@ -47,7 +48,7 @@ lines.append("            char c = name[i];")
 lines.append("            same = (c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c) == e.name[i];")
 lines.append("        }")
 lines.append("        if (same) {")
-lines.append("            return size >= 64 ? e.p64 : e.p32;")
+lines.append("            return e.tex;")
 lines.append("        }")
 lines.append("    }")
 lines.append("    return nullptr;")

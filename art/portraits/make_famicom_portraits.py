@@ -33,6 +33,32 @@ SKIN = [(0xF0, 0xD0, 0xB0), (0xFC, 0xE0, 0xA8), (0xF8, 0xB8, 0xF8), (0xF8, 0xA4,
 AVOID = {"link": [(0xA8, 0x10, 0x00), (0xA8, 0x00, 0x20), (0x88, 0x14, 0x00), (0xE4, 0x00, 0x58), (0xF8, 0x38, 0x00),
                   (0x7C, 0x7C, 0x7C), (0xBC, 0xBC, 0xBC), (0x78, 0x78, 0x78), (0xD8, 0xD8, 0xD8)]}  # skin shades in orange, as on the Famicom
 
+# Hand-picked palettes for portraits the automatic pick gets wrong (NES colours; black is added)
+def _c(v):
+    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+
+
+PALETTE = {
+    # blonde hair, cream wraps with tan shading, blue armour, pale skin, red eyes and Sheikah eye
+    "sheik": [_c(0xF8B800), _c(0xAC7C00), _c(0x503000), _c(0xFCE0A8), _c(0xF0D0B0), _c(0x7C7C7C), _c(0x6888FC),
+              _c(0x4428BC), _c(0xA81000)],
+    # gold hair and brown shade, cream skin with peach shading, blue eyes, lilac dress, red gem
+    "zelda": [_c(0xF8B800), _c(0xAC7C00), _c(0x503000), _c(0xFCE0A8), _c(0xF0D0B0), _c(0xFCA044), _c(0x3CBCFC),
+              _c(0xD8B8F8), _c(0xF83800)],
+}
+
+# Colours limited to a band of rows (as a fraction of the height): Sheik's red is only for the eye on her chest
+ZONES = {"sheik": {_c(0xA81000): (0.68, 1.0)}}
+
+# Hand-placed pixels after the conversion: (style, name) -> [(x, y, colour)]
+FIXES = {
+    # Saria's small smile is lighter than her skin shadow and vanishes at 48px
+    ("A", "saria"): [(22, 31, _c(0xE45C10)), (23, 31, _c(0xE45C10)), (24, 31, _c(0xE45C10)), (21, 30, _c(0xF87858)),
+                     (25, 30, _c(0xF87858))],
+    # Zelda's diadem gem, a clear red stone at 48px
+    ("A", "zelda"): [(23, 12, _c(0xF83800)), (24, 12, _c(0xF83800)), (23, 13, _c(0xA81000)), (24, 13, _c(0xA81000))],
+}
+
 STYLES = {"A": (48, 5, False), "B": (32, 4, False), "C": (40, 5, True)}  # size, main colours (+1 accent, black), ink
 
 
@@ -74,13 +100,15 @@ def famicom(img, size, colors, ink, name=""):
             pal.append(c)
         if len(pal) == colors:
             break
+    if name in PALETTE:
+        pal = list(PALETTE[name])
     # skin always survives when the face shows it (otherwise a small palette can turn it grey)
     skins = [c for c in SKIN if counts.get(c, 0) >= size * size * 0.04]
     if skins and not any(q in SKIN for q in pal):
         pal[-1] = max(skins, key=lambda c: counts[c])
     # ...plus one accent: the most vivid colour left that covers only a few pixels (eyes, gems)
     small_area = size * size * 0.025
-    rest = [c for c, n in counts.items()
+    rest = [] if name in PALETTE else [c for c, n in counts.items()
             if 3 <= n <= small_area and c not in SKIN and all(dist(c, q) > 12000 for q in pal)]
     if rest:
         pal.append(max(rest, key=saturation))
@@ -90,7 +118,11 @@ def famicom(img, size, colors, ink, name=""):
     for y in range(size):
         for x in range(size):
             c = mapped[x, y]
-            o[x, y] = BLACK if c == BLACK else nearest(px[x, y], pal)
+            choices = pal
+            if name in ZONES:
+                choices = [q for q in pal
+                           if q not in ZONES[name] or ZONES[name][q][0] <= y / size < ZONES[name][q][1]]
+            o[x, y] = BLACK if c == BLACK else nearest(px[x, y], choices)
     if ink:
         # black ink where the picture changes sharply, on the darker side of the edge
         res = out.copy()
@@ -130,6 +162,9 @@ def main():
     for style, (size, colors, ink) in STYLES.items():
         for name in src.ORDER:
             f = famicom(crops[name], size, colors, ink, name)
+            fp = f.load()
+            for x, y, c in FIXES.get((style, name), []):
+                fp[x, y] = c
             f.save(os.path.join(OUT, f"portrait_{style}_{name}_{size}.png"))
             f.resize((size * 4, size * 4), Image.NEAREST).save(os.path.join(OUT, f"portrait_{style}_{name}_x4.png"))
 
