@@ -5412,7 +5412,10 @@ void Interface_Draw(PlayState* play) {
             Interface_DrawMagicBar(play);
         }
 
-        Minimap_Draw(play);
+        // Nocturne of Time: the dungeon-crawler automap replaces the minimap while it's active
+        if (GameInteractor_Should(VB_DRAW_MINIMAP, true, play)) {
+            Minimap_Draw(play);
+        }
 
         if ((R_PAUSE_MENU_MODE != 2) && (R_PAUSE_MENU_MODE != 3)) {
             if (CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0)) {

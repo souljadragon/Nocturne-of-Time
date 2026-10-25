@@ -4229,4 +4229,15 @@ typedef enum {
     // - `Input*` input
     VB_PLAYER_FILTER_INPUT,
 
+    // Nocturne of Time
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // Whether the vanilla minimap (dungeon/overworld map in the corner) draws this frame.
+    // Handlers may draw their own map onto OVERLAY_DISP and return false.
+    // #### `args`
+    // - `PlayState*` play
+    VB_DRAW_MINIMAP,
+
 } GIVanillaBehavior;

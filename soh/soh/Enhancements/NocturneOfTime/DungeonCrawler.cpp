@@ -17,6 +17,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ShipInit.hpp"
 #include "DungeonCrawler.h"
+#include "Automap.h"
 
 #include <math.h>
 
@@ -313,7 +314,9 @@ void Activate(Player* player) {
     sCrawler.active = true;
     sCrawler.action = Action::None;
     sCrawler.pitch = 0;
-    sCrawler.gridOrigin = player->actor.world.pos;
+    // Steps land on the automap's fixed world tiles (centres at multiples of the tile size)
+    sCrawler.gridOrigin = { roundf(player->actor.world.pos.x / kTileSize) * kTileSize, 0.0f,
+                            roundf(player->actor.world.pos.z / kTileSize) * kTileSize };
     sCrawler.facing = YawToFacing(player->actor.shape.rot.y);
     sCrawler.curYaw = player->actor.shape.rot.y;
     // Ease from wherever Link was facing onto the grid
@@ -334,7 +337,7 @@ void Deactivate(Player* player) {
 }
 
 void ClearMovementInput(Input* input) {
-    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z;
+    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L;
     for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
         pad->stick_x = 0;
         pad->stick_y = 0;
@@ -358,6 +361,11 @@ void OnFilterInput(Player* player, Input* input) {
     bool left = cur.stick_x < -kStickThreshold || (cur.button & BTN_DLEFT);
     bool right = cur.stick_x > kStickThreshold || (cur.button & BTN_DRIGHT);
     bool strafe = cur.button & BTN_Z;
+
+    if (input->press.button & BTN_L) {
+        Automap_ToggleLarge();
+    }
+    Automap_Update(play, player);
 
     // Look up/down with the right stick; springs back to level when released
     s16 targetPitch = (s16)CLAMP((s32)cur.right_stick_y * kMaxPitch / 80, -kMaxPitch, kMaxPitch);
@@ -471,6 +479,10 @@ void RegisterDungeonCrawler() {
 
 bool DungeonCrawler_IsActive() {
     return sCrawler.active;
+}
+
+signed char DungeonCrawler_GetFacing() {
+    return sCrawler.facing;
 }
 
 static RegisterShipInitFunc initFunc(RegisterDungeonCrawler, { CVAR_CRAWLER_NAME });

@@ -210,6 +210,7 @@ void SohMenu::AddMenuEnhancements() {
             "Stick or D-pad left/right: turn 90 degrees\n"
             "Hold Z + left/right: strafe\n"
             "Right stick up/down: look up/down\n"
+            "L: switch between the corner map and the large map\n"
             "A, B and items work as normal."));
 
     // Quality of Life
