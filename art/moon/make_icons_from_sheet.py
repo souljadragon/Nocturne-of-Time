@@ -27,6 +27,24 @@ CIRCLES = {
 ORDER = ["new", "2of8", "3of8", "half", "5of8", "6of8", "7of8", "full"]
 LABELS = ["New Moon", "2/8", "3/8", "Half Moon", "5/8", "6/8", "7/8", "Full Moon"]
 GLOW = {"7of8": 0.55, "full": 1.0}  # strength of the purple aura
+
+# Glowing eyes: centres as fractions of the radius from the moon's centre (x right, y down), and how strongly
+# they glow per phase - faint at New Moon, blazing at Full Moon.
+EYES = {
+    "new": [(-0.40, -0.20), (0.40, -0.20)],
+    "2of8": [(-0.44, -0.20), (0.40, -0.20)],
+    "3of8": [(-0.48, -0.20), (0.40, -0.20)],
+    "half": [(-0.44, -0.20), (0.40, -0.20)],
+    "5of8": [(-0.42, -0.24), (0.44, -0.24)],
+    "6of8": [(-0.44, -0.24), (0.44, -0.24)],
+    "7of8": [(-0.44, -0.30), (0.42, -0.30)],
+    "full": [(-0.44, -0.30), (0.44, -0.30)],
+}
+EYE_GLOW = {"new": 0.15, "2of8": 0.25, "3of8": 0.4, "half": 0.5, "5of8": 0.6, "6of8": 0.75, "7of8": 0.9, "full": 1.0}
+EYE_RADIUS = 0.17        # eye region, as a fraction of the moon radius
+HALO_RADIUS = 0.30
+EYE_VIOLET = (200, 140, 255)
+EYE_HOT = (255, 235, 255)
 GLOW_COLOR = (140, 80, 255)
 OUTLINE = (10, 8, 14, 255)
 
@@ -41,6 +59,59 @@ def cut_disc(sheet, cx, cy, r, inset=2):
     mask = mask.resize((size, size), Image.LANCZOS)
     crop.putalpha(mask)
     return crop
+
+
+def glow_eyes(disc, eyes, strength):
+    """Make the eyes glow: whites/irises shift to violet (white-hot in the last phases), pupils blaze at the
+    top end, and a soft violet halo surrounds each eye (which is all closed eyes get)."""
+    img = disc.copy()
+    size = img.size[0]
+    r = size / 2
+    alpha = img.getchannel("A")
+
+    # 1. Halo under everything: violet light around each eye, kept inside the moon
+    halo = Image.new("L", img.size, 0)
+    d = ImageDraw.Draw(halo)
+    for ex, ey in eyes:
+        cx, cy = r + ex * r, r + ey * r
+        hr = HALO_RADIUS * r
+        d.ellipse([cx - hr, cy - hr * 0.7, cx + hr, cy + hr * 0.7], fill=int(110 * strength))
+    halo = halo.filter(ImageFilter.GaussianBlur(r * 0.08))
+    halo = Image.composite(halo, Image.new("L", img.size, 0), alpha)
+    base = img.convert("RGB")
+    base = Image.composite(Image.new("RGB", img.size, EYE_VIOLET), base, halo)
+
+    # 2. The eyes themselves
+    px = base.load()
+    src = img.load()
+    # past 6/8 the whites go from violet toward white-hot so they read against the purple face
+    hot = max(0.0, (strength - 0.6) / 0.4)
+    eye_target = tuple(int(v + (h - v) * hot) for v, h in zip(EYE_VIOLET, EYE_HOT))
+    for ex, ey in eyes:
+        cx, cy = r + ex * r, r + ey * r
+        er = EYE_RADIUS * r
+        for y in range(int(cy - er), int(cy + er) + 1):
+            for x in range(int(cx - er), int(cx + er) + 1):
+                if not (0 <= x < size and 0 <= y < size):
+                    continue
+                dist = math.hypot(x - cx, y - cy) / er
+                if dist > 1:
+                    continue
+                cr, cg, cb, _ = src[x, y]  # judge from the original drawing, not the halo
+                lum = 0.3 * cr + 0.59 * cg + 0.11 * cb
+                fall = 1 - dist * dist
+                if lum > 90:
+                    t = strength * (0.5 + 0.5 * fall)
+                    k = 0.55 + 0.45 * lum / 255
+                    tgt = tuple(min(255, int(c * k + 40 * hot)) for c in eye_target)
+                    px[x, y] = tuple(int(o + (g - o) * t) for o, g in zip((cr, cg, cb), tgt))
+                elif strength > 0.7 and dist < 0.35:
+                    t = (strength - 0.7) / 0.3
+                    px[x, y] = tuple(int(o + (g - o) * t) for o, g in zip((cr, cg, cb), EYE_HOT))
+
+    out = base.convert("RGBA")
+    out.putalpha(alpha)
+    return out
 
 
 def make_icon(disc, canvas, disc_px, glow):
@@ -76,7 +147,7 @@ def make_icon(disc, canvas, disc_px, glow):
 
 def main(sheet_path):
     sheet = Image.open(sheet_path).convert("RGB")
-    discs = {k: cut_disc(sheet, *CIRCLES[k]) for k in ORDER}
+    discs = {k: glow_eyes(cut_disc(sheet, *CIRCLES[k]), EYES[k], EYE_GLOW[k]) for k in ORDER}
 
     for canvas, disc_px in ((32, 28), (48, 42)):
         icons = [make_icon(discs[k], canvas, disc_px, GLOW.get(k, 0)) for k in ORDER]
