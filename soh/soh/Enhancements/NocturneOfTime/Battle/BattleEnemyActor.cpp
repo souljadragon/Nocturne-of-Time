@@ -71,9 +71,17 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
 void BattleEnemy_Destroy(Actor*, PlayState*) {
 }
 
+bool sFast = false;
+
 void BattleEnemy_Update(Actor* thisx, PlayState* play) {
     BattleEnemy* self = (BattleEnemy*)thisx;
     SkelAnime_Update(&self->skelAnime);
+    if (sFast) {
+        SkelAnime_Update(&self->skelAnime);
+        if (self->defeatTimer > 1) {
+            self->defeatTimer--;
+        }
+    }
 
     // Keese hover
     if (thisx->params == (s16)Nocturne::EnemyKind::FireKeese) {
@@ -236,4 +244,8 @@ void BattleEnemyActor_Defeat(Actor* actor) {
 
 bool BattleEnemyActor_Is(Actor* actor) {
     return actor != NULL && sActorId >= 0 && actor->id == sActorId;
+}
+
+void BattleEnemyActor_SetFast(bool fast) {
+    sFast = fast;
 }

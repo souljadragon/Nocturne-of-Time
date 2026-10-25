@@ -225,7 +225,17 @@ static void TestLevels() {
     CHECK(l5.level == 5);
     CHECK(l5.maxHp > l1.maxHp && l5.st > l1.st);
     CHECK(l5.hp == l5.maxHp);
-    CHECK(XpForLevel(1) == 0 && XpForLevel(2) == 40);
+    CHECK(XpForLevel(1) == 0 && XpForLevel(2) == XpToNext(1));
+    CHECK(XpToNext(5) == 150 && XpToNext(10) == 480);
+    for (int l = 2; l < 99; l++) {
+        CHECK(XpToNext(l) > XpToNext(l - 1));
+    }
+    // Over-levelled members earn less; stronger foes give a bonus
+    CHECK(ScaledXp(100, 5, 4) == 100);
+    CHECK(ScaledXp(100, 10, 4) == 77);
+    CHECK(ScaledXp(100, 20, 4) == 55);
+    CHECK(ScaledXp(100, 4, 8) == 125);
+    CHECK(ScaledXp(1, 50, 1) == 1);
 }
 
 static void TestLevelUpPoints() {
@@ -269,7 +279,18 @@ static void TestLevelUpPoints() {
     Combatant a = MakeLink(5), b = MakeLink(5);
     CHECK(a.st == b.st && a.ma == b.ma && a.vi == b.vi && a.ag == b.ag && a.lu == b.lu);
     int linkSum = a.st + a.ma + a.vi + a.ag + a.lu;
-    CHECK(linkSum == 9 + 4 * (kAutoStatPoints + kManualStatPoints));
+    CHECK(linkSum == 14 + 4 * (kAutoStatPoints + kManualStatPoints));
+    // Stats stop at the cap
+    Combatant capped = MakeSaria(1);
+    capped.ma = kStatCap;
+    for (int i = 0; i < 40; i++) {
+        LevelUp(capped, rng);
+    }
+    CHECK(capped.ma == kStatCap);
+    // The old balance gave Saria Ma 35 by level 12; now even all chosen points in Magic stay in the low 20s
+    Combatant s12 = MakeSaria(12);
+    CHECK(s12.ma <= 26);
+    std::printf("  Saria at level 12: Ma %d (all chosen points in Magic)\n", s12.ma);
     std::printf("  Link at level 5: St %d Ma %d Vi %d Ag %d Lu %d\n", a.st, a.ma, a.vi, a.ag, a.lu);
 }
 

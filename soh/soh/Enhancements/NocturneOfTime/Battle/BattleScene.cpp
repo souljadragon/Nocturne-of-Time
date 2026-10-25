@@ -58,8 +58,13 @@ constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 
 enum class Ui { None, Intro, Command, Skills, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
 
-enum Command { CMD_ATTACK, CMD_SKILL, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_RUN, CMD_COUNT };
-const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Guard", "Pass", "Analyze", "Run" };
+enum Command { CMD_ATTACK, CMD_SKILL, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_AUTO, CMD_RUN, CMD_COUNT };
+const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Guard", "Pass", "Analyze", "Auto", "Run" };
+
+// Auto-battle: everyone attacks with their weapon and messages fly by (for clearing easy fights quickly)
+constexpr int kAutoMessageFrames = 7;  // normal messages
+constexpr int kAutoHeldFrames = 16;    // messages that usually wait for A (rewards, level-ups, finds)
+constexpr int kAutoThinkFrames = 2;    // pause before each enemy acts
 
 constexpr int kPendingAnalyze = -2;
 
@@ -89,6 +94,7 @@ struct Scene {
     bool showSkillInfo = false; // Z in the skill list
     int statMember = -1;        // party member placing level-up points
     int statCursor = 0;
+    bool autoBattle = false; // until B is pressed or the battle ends
 };
 
 Scene sScene;
@@ -173,8 +179,34 @@ std::vector<EnemyKind> RollEncounter() {
     return kinds;
 }
 
+// Navi is frozen with the rest of the dungeon during a battle and would hang in front of the camera: hide her
+// by clearing her draw function, and put it back afterwards (only if she is still the same actor).
+Actor* sHiddenNavi = NULL;
+ActorFunc sNaviDraw = NULL;
+
+void HideNavi(Player* player) {
+    if (player == NULL || player->naviActor == NULL || sHiddenNavi != NULL) {
+        return;
+    }
+    sHiddenNavi = player->naviActor;
+    sNaviDraw = sHiddenNavi->draw;
+    sHiddenNavi->draw = NULL;
+}
+
+void ShowNavi() {
+    if (sHiddenNavi != NULL && gPlayState != NULL && GET_PLAYER(gPlayState) != NULL &&
+        GET_PLAYER(gPlayState)->naviActor == sHiddenNavi && sHiddenNavi->draw == NULL) {
+        sHiddenNavi->draw = sNaviDraw;
+    }
+    sHiddenNavi = NULL;
+    sNaviDraw = NULL;
+}
+
 void StartBattle(PlayState* play, Player* player) {
     EnsureParty();
+    HideNavi(player);
+    sScene.autoBattle = false;
+    BattleEnemyActor_SetFast(false);
 
     // Face the most open direction so the enemies have room
     s8 bestFacing = DungeonCrawler_GetFacing();
@@ -341,6 +373,9 @@ void EndBattle() {
         }
     }
     KillEnemyActors();
+    ShowNavi();
+    sScene.autoBattle = false;
+    BattleEnemyActor_SetFast(false);
     sScene.battle.reset();
     sScene.ui = Ui::None;
     sScene.queue.clear();
@@ -350,17 +385,30 @@ void EndBattle() {
 
 void QueueRewards() {
     Battle& b = *sScene.battle;
-    int xp = b.XpEarned();
     int rupees = b.RupeesEarned();
+    const std::vector<Combatant>& after = b.Party();
+    std::vector<PartyMember>& members = Party_Members();
+    // XP per member: each enemy's reward shrinks when the member is far above its level
+    auto xpFor = [&](const PartyMember& m) {
+        int xp = 0;
+        for (const Combatant& foe : b.Enemies()) {
+            xp += ScaledXp(foe.xpReward, m.base.level, foe.level);
+        }
+        return xp;
+    };
+    int shownXp = 0;
+    for (size_t i = 0; i < members.size() && i < after.size(); i++) {
+        if (after[i].Alive()) {
+            shownXp = std::max(shownXp, xpFor(members[i]));
+        }
+    }
     BattleEvent e;
     e.type = BattleEvent::Type::Message;
-    e.text = "Got " + std::to_string(xp) + " XP and " + std::to_string(rupees) + " rupees.";
+    e.text = "Got " + std::to_string(shownXp) + " XP and " + std::to_string(rupees) + " rupees.";
     e.hold = true;
     sScene.queue.push_back(e);
     Rupees_ChangeBy((s16)rupees);
 
-    const std::vector<Combatant>& after = b.Party();
-    std::vector<PartyMember>& members = Party_Members();
     for (size_t i = 0; i < members.size() && i < after.size(); i++) {
         PartyMember& m = members[i];
         m.base.hp = after[i].hp;
@@ -368,7 +416,7 @@ void QueueRewards() {
         if (!after[i].Alive()) {
             continue; // fallen allies earn nothing
         }
-        m.xp += xp;
+        m.xp += xpFor(m);
         while (m.xp >= XpForLevel(m.base.level + 1)) {
             LevelGains gains = LevelUp(m.base, [] { return Rand_ZeroOne() * 0.99999f; });
             if (!gains.leveled) {
@@ -542,7 +590,7 @@ void Proceed() {
             sScene.showingMessage = false;
             break;
         case BattlePhase::EnemyTurn:
-            if (sScene.timer >= kEnemyThinkFrames) {
+            if (sScene.timer >= (sScene.autoBattle ? kAutoThinkFrames : kEnemyThinkFrames)) {
                 Queue(b.EnemyAct());
             }
             break;
@@ -687,6 +735,11 @@ void HandleInput(const Buttons& in) {
                         sScene.targetCursor = FirstAliveEnemy();
                         sScene.ui = Ui::TargetEnemy;
                         break;
+                    case CMD_AUTO:
+                        PlaySfx(NA_SE_SY_DECIDE);
+                        sScene.autoBattle = true;
+                        BattleEnemyActor_SetFast(true);
+                        break;
                     case CMD_RUN:
                         PlaySfx(NA_SE_SY_DECIDE);
                         Queue(b.Run());
@@ -748,6 +801,10 @@ void HandleInput(const Buttons& in) {
                 PlaySfx(NA_SE_SY_CURSOR);
             } else if (in.a) {
                 PartyMember& m = members[sScene.statMember];
+                if (GetStat(m.base, (Stat)sScene.statCursor) >= kStatCap) {
+                    PlaySfx(NA_SE_SY_ERROR);
+                    break;
+                }
                 AddStat(m.base, (Stat)sScene.statCursor, 1);
                 m.unspentStatPoints--;
                 PlaySfx(NA_SE_SY_DECIDE);
@@ -806,6 +863,8 @@ void RegisterBattleScene() {
     COND_HOOK(OnSceneInit, enabled, [](int16_t sceneNum) {
         // Actors from the old scene are gone; drop the battle without touching them
         sScene.enemyActors.clear();
+        sHiddenNavi = NULL; // the old Navi is gone with the old scene
+        sNaviDraw = NULL;
         sScene.battle.reset();
         sScene.ui = Ui::None;
         sScene.queue.clear();
@@ -836,6 +895,7 @@ bool Battle_IsActive() {
 
 void Battle_Abort() {
     KillEnemyActors();
+    ShowNavi();
     sScene.battle.reset();
     sScene.ui = Ui::None;
     sScene.queue.clear();
@@ -866,6 +926,14 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
         sScene.impactFlash--;
     }
 
+    if (sScene.autoBattle && in.b) {
+        // B stops auto-battle; the current action finishes and the next turn waits for commands
+        sScene.autoBattle = false;
+        BattleEnemyActor_SetFast(false);
+        PlaySfx(NA_SE_SY_CANCEL);
+        in.b = false;
+    }
+
     switch (sScene.ui) {
         case Ui::Intro:
             if (sScene.timer >= kIntroFrames || (in.a && sScene.timer >= kMessageMinFrames)) {
@@ -877,7 +945,9 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
         case Ui::Messages:
             if (sScene.showingMessage) {
                 bool pressed = in.a && sScene.timer >= kMessageMinFrames;
-                bool done = sScene.messageHeld ? pressed : (sScene.timer >= kMessageFrames || pressed);
+                int frames = sScene.messageHeld ? (sScene.autoBattle ? kAutoHeldFrames : -1)
+                                                : (sScene.autoBattle ? kAutoMessageFrames : kMessageFrames);
+                bool done = pressed || (frames >= 0 && sScene.timer >= frames);
                 if (done) {
                     sScene.showingMessage = false;
                     sScene.timer = 0;
@@ -893,6 +963,22 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
                 gSaveContext.health = 0;
             }
             EndBattle();
+            break;
+
+        case Ui::Command:
+            if (sScene.autoBattle) {
+                // Weapon attack on the weakest-looking foe: the one with the least HP left
+                Battle& b = *sScene.battle;
+                int target = FirstAliveEnemy();
+                for (int i = 0; i < (int)b.Enemies().size(); i++) {
+                    if (b.Enemies()[i].Alive() && b.Enemies()[i].hp < b.Enemies()[target].hp) {
+                        target = i;
+                    }
+                }
+                Queue(b.UseSkill(0, target));
+                break;
+            }
+            HandleInput(in);
             break;
 
         default:
@@ -972,7 +1058,7 @@ void Battle_DrawUi(PlayState* play) {
         msg1 = msg1.substr(0, cut);
     }
     const int msgH = msg2.empty() ? 14 : 24;
-    const int cmdX = 10, cmdY = 134, cmdW = 70, cmdH = CMD_COUNT * 10 + 4;
+    const int cmdX = 10, cmdY = 124, cmdW = 70, cmdH = CMD_COUNT * 10 + 4;
     const int listX = 84, listW = SCREEN_WIDTH - 94, listBottom = cmdY + cmdH;
     const int partyX = 10, partyY = 204, partyW = SCREEN_WIDTH - 20, partyH = 30;
     const int colW = partyW / 2;
@@ -1047,7 +1133,7 @@ void Battle_DrawUi(PlayState* play) {
     }
 
     // Level-up points: a centred panel listing the stats
-    const int ptsX = 90, ptsY = 66, ptsW = SCREEN_WIDTH - 180, ptsH = 82;
+    const int ptsW = 196, ptsX = (SCREEN_WIDTH - ptsW) / 2, ptsY = 66, ptsH = 82;
     bool pointsUi = sScene.ui == Ui::StatPoints && sScene.statMember >= 0 &&
                     sScene.statMember < (int)Party_Members().size();
     if (pointsUi) {
@@ -1089,6 +1175,9 @@ void Battle_DrawUi(PlayState* play) {
     };
 
     text(10 + icons.Total() * 13 + 4, iconY + 1, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
+    if (sScene.autoBattle) {
+        text(SCREEN_WIDTH - 10 - 13 * 8, iconY + 1, "AUTO  B:Stop", 110, 230, 120);
+    }
 
     if (sScene.showingMessage) {
         u8 mr = 255, mg = 255, mb = 255;
@@ -1194,7 +1283,9 @@ void Battle_DrawUi(PlayState* play) {
             char row[24];
             snprintf(row, sizeof(row), "%s%-3s %3d", sel ? ">" : " ", StatName((Stat)i), GetStat(pm.base, (Stat)i));
             text(ptsX + 6, ptsY + 24 + i * 10, row, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
-            if (sel) {
+            if (GetStat(pm.base, (Stat)i) >= kStatCap) {
+                text(ptsX + 6 + 10 * 8, ptsY + 24 + i * 10, "Max", 150, 150, 170);
+            } else if (sel) {
                 text(ptsX + 6 + 10 * 8, ptsY + 24 + i * 10, "+1", 110, 230, 120);
             }
         }

@@ -14,3 +14,6 @@ void BattleEnemyActor_Defeat(Actor* actor);
 
 // Is this one of ours?
 bool BattleEnemyActor_Is(Actor* actor);
+
+// Auto-battle: animations and the defeat effect run at double speed.
+void BattleEnemyActor_SetFast(bool fast);

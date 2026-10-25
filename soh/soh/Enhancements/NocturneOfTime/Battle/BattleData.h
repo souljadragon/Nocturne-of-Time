@@ -12,8 +12,15 @@ Combatant MakeLink(int level);
 Combatant MakeSaria(int level);
 Combatant MakeEnemy(EnemyKind kind);
 
-// Total XP needed to reach `level` from level 1.
+// Total XP needed to reach `level` from level 1. The step to the next level grows with the square of the level
+// (a cubic total, like most SMT games), so early levels come quickly and later ones take real work.
 int XpForLevel(int level);
+// XP still needed to go from `level` to `level + 1`.
+int XpToNext(int level);
+
+// XP a party member earns from one enemy: full value near its level, less when far above it (as in SMT III,
+// which cuts XP by about a quarter beyond 5 levels and by almost half beyond 11).
+int ScaledXp(int baseXp, int memberLevel, int enemyLevel);
 
 // Core stats in a fixed order (for level-up points and menus).
 enum class Stat : int { St, Ma, Vi, Ag, Lu, Count };
@@ -22,8 +29,10 @@ int GetStat(const Combatant& c, Stat s);
 void AddStat(Combatant& c, Stat s, int amount);
 
 // Stat points per level: some placed automatically by archetype, the rest chosen by the player.
-constexpr int kAutoStatPoints = 5;
+// SMT III gives 1 point per level (cap 40), SMT V a few more; we use 2 automatic + 1 chosen.
+constexpr int kAutoStatPoints = 2;
 constexpr int kManualStatPoints = 1;
+constexpr int kStatCap = 99; // base stats (equipment can go past it)
 
 struct LevelGains {
     bool leveled = false;

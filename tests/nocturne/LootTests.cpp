@@ -56,7 +56,8 @@ static void TestRarityOdds() {
 
     // Common enemies: never Legendary, mostly white and blue, purple rare (~4%)
     CHECK(common[Rarity::Legendary] == 0 && lucky[Rarity::Legendary] == 0);
-    CHECK(common[Rarity::Common] > common[Rarity::Uncommon]);
+    CHECK(common[Rarity::Uncommon] > 20000 * 0.40 && common[Rarity::Common] < 20000 * 0.56); // blues nearly even
+    CHECK(lucky[Rarity::Uncommon] > lucky[Rarity::Common]); // luck tips it toward blue
     CHECK(common[Rarity::Uncommon] > common[Rarity::Rare] * 4);
     CHECK(common[Rarity::Rare] < 20000 * 0.06);
     CHECK(lucky[Rarity::Rare] > common[Rarity::Rare]); // luck still helps
@@ -65,6 +66,7 @@ static void TestRarityOdds() {
     CHECK(boss[Rarity::Common] == 0 && boss[Rarity::Legendary] > elite[Rarity::Legendary]);
 
     std::array<float, 4> odds = RarityOdds(DropSource::Common, 0.0f);
+    CHECK(odds[2] > 3.9f && odds[2] < 4.1f); // purple unchanged at 4%
     CHECK(odds[0] + odds[1] + odds[2] + odds[3] > 99.9f && odds[0] + odds[1] + odds[2] + odds[3] < 100.1f);
 }
 

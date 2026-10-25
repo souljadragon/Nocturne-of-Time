@@ -1,5 +1,7 @@
 #include "BattleData.h"
 
+#include <algorithm>
+
 namespace Nocturne {
 
 namespace {
@@ -74,7 +76,9 @@ void GrowTo(Combatant& c, int level) {
         if (!g.leveled) {
             break;
         }
-        AddStat(c, TopStat(c), kManualStatPoints);
+        if (GetStat(c, TopStat(c)) < kStatCap) {
+            AddStat(c, TopStat(c), kManualStatPoints);
+        }
     }
     c.hp = c.maxHp;
     c.mp = c.maxMp;
@@ -89,12 +93,11 @@ Combatant MakeLink(int level) {
     c.level = 1;
     c.maxHp = 50;
     c.maxMp = 6;
-    // Level-1 stats are low because every level adds 6 stat points (5 automatic + 1 chosen)
-    c.st = 3;
+    c.st = 5;
     c.ma = 1;
-    c.vi = 2;
-    c.ag = 2;
-    c.lu = 1;
+    c.vi = 3;
+    c.ag = 3;
+    c.lu = 2;
     c.skills = {
         Describe(Attack(Element::Slash, 12), "A sword strike."),
         Describe(Make("Spin Attack", Element::Slash, TargetType::AllEnemies, 9, 0, 6),
@@ -114,10 +117,10 @@ Combatant MakeSaria(int level) {
     c.maxHp = 34;
     c.maxMp = 28;
     c.st = 1;
-    c.ma = 3;
-    c.vi = 1;
-    c.ag = 2;
-    c.lu = 2;
+    c.ma = 5;
+    c.vi = 2;
+    c.ag = 3;
+    c.lu = 3;
     SetAffinity(c, Element::Wind, Affinity::Drain);
     SetAffinity(c, Element::Strike, Affinity::Resist);
     SetAffinity(c, Element::Fire, Affinity::Weak);
@@ -213,13 +216,30 @@ Combatant MakeEnemy(EnemyKind kind) {
     return c;
 }
 
+int XpToNext(int level) {
+    // 30 XP for 1->2, 150 for 5->6, 480 for 10->11, 1720 for 20->21
+    return 4 * level * level + 6 * level + 20;
+}
+
 int XpForLevel(int level) {
-    // 1->2 needs 40 XP, each level a little more
     int total = 0;
-    for (int l = 2; l <= level; l++) {
-        total += 20 + l * 10;
+    for (int l = 1; l < level; l++) {
+        total += XpToNext(l);
     }
     return total;
+}
+
+int ScaledXp(int baseXp, int memberLevel, int enemyLevel) {
+    int above = memberLevel - enemyLevel;
+    float scale = 1.0f;
+    if (above > 10) {
+        scale = 0.55f;
+    } else if (above > 5) {
+        scale = 0.77f;
+    } else if (above < -2) {
+        scale = 1.25f; // a bonus for beating stronger foes
+    }
+    return std::max(1, (int)(baseXp * scale + 0.5f));
 }
 
 const char* StatName(Stat s) {
@@ -291,11 +311,16 @@ LevelGains LevelUp(Combatant& c, const std::function<float()>& rand01) {
     c.maxHp += growth.hp;
     c.maxMp += growth.mp;
 
+    for (size_t i = 0; i < growth.weights.size(); i++) {
+        if (GetStat(c, (Stat)i) >= kStatCap) {
+            growth.weights[i] = 0.0f; // capped stats get no more points
+        }
+    }
     float total = 0.0f;
     for (float w : growth.weights) {
         total += w;
     }
-    for (int p = 0; p < kAutoStatPoints; p++) {
+    for (int p = 0; p < kAutoStatPoints && total > 0.0f; p++) {
         float roll = rand01() * total;
         size_t pick = growth.weights.size() - 1;
         for (size_t i = 0; i < growth.weights.size(); i++) {
@@ -307,6 +332,10 @@ LevelGains LevelUp(Combatant& c, const std::function<float()>& rand01) {
         }
         g.stats[pick]++;
         AddStat(c, (Stat)pick, 1);
+        if (GetStat(c, (Stat)pick) >= kStatCap) {
+            total -= growth.weights[pick];
+            growth.weights[pick] = 0.0f;
+        }
     }
     return g;
 }
