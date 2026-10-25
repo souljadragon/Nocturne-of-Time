@@ -112,6 +112,28 @@ void PlaySfx(u16 id) {
     Sfx_PlaySfxCentered(id);
 }
 
+// Split text into lines of at most `width` characters, breaking at spaces.
+std::vector<std::string> WrapText(const std::string& text, size_t width) {
+    std::vector<std::string> lines;
+    std::string rest = text;
+    while (!rest.empty()) {
+        if (rest.size() <= width) {
+            lines.push_back(rest);
+            break;
+        }
+        size_t cut = rest.rfind(' ', width);
+        if (cut == std::string::npos || cut == 0) {
+            cut = width;
+            lines.push_back(rest.substr(0, cut));
+            rest = rest.substr(cut);
+        } else {
+            lines.push_back(rest.substr(0, cut));
+            rest = rest.substr(cut + 1);
+        }
+    }
+    return lines;
+}
+
 std::string AffinitySummary(const Combatant& c) {
     static const Affinity kOrder[] = { Affinity::Weak, Affinity::Resist, Affinity::Null, Affinity::Repel,
                                        Affinity::Drain };
@@ -855,25 +877,20 @@ void Battle_DrawUi(PlayState* play) {
 
     // Skill info (Z): description wrapped to two lines plus a stats line, above the skill list
     const size_t infoChars = (size_t)(listW - 8) / 8;
-    std::string info1, info2, info3;
+    std::vector<std::string> infoLines;
+    std::string info3;
     bool showInfo = sScene.ui == Ui::Skills && sScene.showSkillInfo && sScene.skillCursor > 0 &&
                     sScene.skillCursor < (int)active.skills.size();
     if (showInfo) {
         const Skill& sk = active.skills[sScene.skillCursor];
-        info1 = sk.description;
-        if (info1.size() > infoChars) {
-            size_t cut = info1.rfind(' ', infoChars);
-            cut = (cut == std::string::npos) ? infoChars : cut;
-            info2 = info1.substr(cut + 1, infoChars);
-            info1 = info1.substr(0, cut);
-        }
+        infoLines = WrapText(sk.description, infoChars);
         const char* who = sk.target == TargetType::OneEnemy     ? "One foe"
                           : sk.target == TargetType::AllEnemies ? "All foes"
                           : sk.target == TargetType::OneAlly    ? "One ally"
                                                                 : "Party";
         info3 = std::string(sk.heal ? "Heals " : "Power ") + std::to_string(sk.power) + "  " + who;
     }
-    const int infoH = 34;
+    const int infoH = (int)infoLines.size() * 9 + 16; // description lines + the stats line
     const int infoY = listY - infoH - 4;
 
     OPEN_DISPS(play->state.gfxCtx);
@@ -984,11 +1001,10 @@ void Battle_DrawUi(PlayState* play) {
     }
 
     if (showInfo) {
-        text(listX + 4, infoY + 3, info1, 235, 235, 235);
-        if (!info2.empty()) {
-            text(listX + 4, infoY + 12, info2, 235, 235, 235);
+        for (size_t i = 0; i < infoLines.size(); i++) {
+            text(listX + 4, infoY + 3 + (int)i * 9, infoLines[i], 235, 235, 235);
         }
-        text(listX + 4, infoY + 23, info3, 150, 200, 255);
+        text(listX + 4, infoY + 5 + (int)infoLines.size() * 9, info3, 150, 200, 255);
     } else if (sScene.ui == Ui::Skills) {
         text(listX + listW - 9 * 8, listY - 10, "Z: Info", 150, 150, 150);
     }
