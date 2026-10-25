@@ -40,7 +40,8 @@ EYES = {
     "7of8": [(-0.44, -0.30), (0.42, -0.30)],
     "full": [(-0.44, -0.30), (0.44, -0.30)],
 }
-EYE_GLOW = {"new": 0.15, "2of8": 0.25, "3of8": 0.4, "half": 0.5, "5of8": 0.6, "6of8": 0.75, "7of8": 0.9, "full": 1.0}
+EYE_GLOW = {"new": 0.0, "2of8": 0.0,  # shut eyes: no glow
+            "3of8": 0.4, "half": 0.5, "5of8": 0.6, "6of8": 0.75, "7of8": 0.9, "full": 1.0}
 EYE_RADIUS = 0.17        # eye region, as a fraction of the moon radius
 HALO_RADIUS = 0.30
 EYE_VIOLET = (200, 140, 255)
