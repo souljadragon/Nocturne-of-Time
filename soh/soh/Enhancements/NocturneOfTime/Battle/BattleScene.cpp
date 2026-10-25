@@ -170,16 +170,27 @@ void StartBattle(PlayState* play, Player* player) {
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
 
-    // Face the most open direction so the enemies have room
+    // Face the roomiest direction: enough floor ahead, and the widest space side to side where the enemies
+    // will stand (the current facing wins ties, so battles usually start the way you were looking)
+    auto roomAt = [&](s8 f, f32& ahead) {
+        s16 y = (s16)(f * 0x4000);
+        ahead = FreeDistance(play, player->actor.world.pos, y, 240.0f);
+        f32 d = CLAMP(ahead - 40.0f, kEnemyMinDistance, kEnemyDistance);
+        Vec3f c = { player->actor.world.pos.x + Math_SinS(y) * d, player->actor.world.pos.y,
+                    player->actor.world.pos.z + Math_CosS(y) * d };
+        f32 l = FreeDistance(play, c, (s16)(y + 0x4000), 220.0f), r = FreeDistance(play, c, (s16)(y - 0x4000), 220.0f);
+        return std::min(ahead, 200.0f) + 2.0f * std::min(l, r); // forward space and the narrower side's width
+    };
     s8 bestFacing = DungeonCrawler_GetFacing();
-    f32 bestDist = FreeDistance(play, player->actor.world.pos, (s16)(bestFacing * 0x4000), 240.0f);
-    if (bestDist < 160.0f) {
-        for (s8 f = 0; f < 4; f++) {
-            f32 d = FreeDistance(play, player->actor.world.pos, (s16)(f * 0x4000), 240.0f);
-            if (d > bestDist) {
-                bestDist = d;
-                bestFacing = f;
-            }
+    f32 bestDist = 0.0f;
+    f32 bestScore = roomAt(bestFacing, bestDist) + 30.0f; // a little bias toward the current facing
+    for (s8 f = 0; f < 4; f++) {
+        f32 ahead;
+        f32 score = roomAt(f, ahead);
+        if (f != bestFacing && score > bestScore && ahead >= kEnemyMinDistance + 40.0f) {
+            bestScore = score;
+            bestFacing = f;
+            bestDist = ahead;
         }
     }
     DungeonCrawler_SetFacing(bestFacing);
@@ -244,6 +255,12 @@ void StartBattle(PlayState* play, Player* player) {
     if (rowWidth > room && rowWidth > 0.0f) {
         squeeze = std::max(0.35f, room / rowWidth); // crowd them together rather than into the wall
     }
+    // Still too wide (a Skulltula in a narrow corridor): shrink them a little so they don't clip the walls
+    f32 sizeScale = 1.0f;
+    if (rowWidth * squeeze > room && rowWidth > 0.0f) {
+        sizeScale = std::max(0.6f, room / (rowWidth * squeeze));
+        squeeze *= sizeScale;
+    }
     const f32 shift = 0.0f;
 
     sScene.enemyActors.clear();
@@ -282,7 +299,11 @@ void StartBattle(PlayState* play, Player* player) {
         }
         // Each enemy turns to look straight at the camera
         s16 face = Math_Atan2S(origin.z - pos.z, origin.x - pos.x);
-        sScene.enemyActors.push_back(BattleEnemyActor_Spawn(play, enemies[i].kind, pos.x, floorY, pos.z, face));
+        Actor* a = BattleEnemyActor_Spawn(play, enemies[i].kind, pos.x, floorY, pos.z, face);
+        if (a != NULL && sizeScale < 1.0f) {
+            BattleEnemyActor_SetSize(a, sizeScale);
+        }
+        sScene.enemyActors.push_back(a);
     }
 
     // Battle stats include equipment

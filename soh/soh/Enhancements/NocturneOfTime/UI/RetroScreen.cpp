@@ -54,10 +54,14 @@ void ShowNavi(Player* player) {
 }
 
 void SetViewport(PlayState* play, const RetroRect& r) {
+    // The renderer stretches viewport coordinates across the whole (wide) window, while the HUD stays in the
+    // 4:3 middle: convert the window's x so the 3D lands exactly inside its frame. In 4:3 this is a no-op.
+    const int left = Retro::Painter::ScreenLeft(); // <= 0
+    const float k = 160.0f / (160.0f - (float)left);
     Viewport vp;
-    vp.leftX = r.x;
+    vp.leftX = (s32)(160.0f + (r.x - 160.0f) * k + 0.5f);
+    vp.rightX = (s32)(160.0f + (r.x + r.w - 160.0f) * k + 0.5f);
     vp.topY = r.y;
-    vp.rightX = r.x + r.w;
     vp.bottomY = r.y + r.h;
     View_SetViewport(&play->view, &vp);
 }
@@ -73,9 +77,12 @@ void RegisterRetroScreen() {
         }
         Player* player = GET_PLAYER(play);
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
-            SetViewport(play, Battle_IsActive() ? kBattleView : kFieldView);
+            SetViewport(play, kView);
             sViewportChanged = true;
             HideNavi(player);
+            // No cinematic black bars: they would clip the top and bottom of the view window
+            Letterbox_SetSizeTarget(0);
+            ShrinkWindow_SetCurrentVal(0);
         } else {
             if (sViewportChanged) {
                 SetViewport(play, { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT });

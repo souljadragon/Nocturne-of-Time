@@ -272,8 +272,8 @@ void EquipMenu_Update(void* inputPtr) {
                 break;
             }
             ConsumableId id = owned[sMenu.useCursor];
-            if (in.up || in.down) {
-                Move(sMenu.useTarget, (int)members.size(), in.up);
+            if (in.left || in.right) { // the party cards sit side by side
+                Move(sMenu.useTarget, (int)members.size(), in.left);
             } else if (in.a) {
                 std::vector<std::string> result = Party_UseConsumable(id, sMenu.useTarget);
                 PlaySfx(result.empty() ? NA_SE_SY_ERROR : NA_SE_SY_HP_RECOVER);
@@ -521,7 +521,7 @@ static void DrawItemsView(PlayState* play) {
 
     const char* hint = sMenu.page == Page::Members ? "◀▶:TAB  A:CHOOSE  B:CLOSE"
                        : sMenu.page == Page::Use     ? "A:USE  B:BACK"
-                                                     : "A:GIVE  B:BACK";
+                                                     : "◀▶:WHO  A:GIVE  B:BACK";
     p.Text(14, 226, hint, Grey);
     CLOSE_DISPS(play->state.gfxCtx);
 }

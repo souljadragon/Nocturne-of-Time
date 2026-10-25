@@ -1,7 +1,7 @@
 // Nocturne of Time: the dungeon HUD in the Famicom Megami Tensei style. While the crawler is active it
-// replaces OoT's interface (hearts, buttons, minimap): the 3D view sits in a window (see RetroScreen) with the
-// moon, automap and location beside it, a message bar under it and party cards along the bottom. Dialogue
-// boxes are drawn separately by the game and are unaffected.
+// replaces OoT's interface (hearts, buttons, minimap) with the shared Megami Tensei screen (see RetroScreen):
+// place and moon on top, the 3D view window with the automap in its corner, the message window and party cards.
+// Dialogue boxes are drawn separately by the game and are unaffected.
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -66,79 +66,71 @@ const char* FacingName(signed char facing) {
 }
 
 // Outside the anonymous namespace: OPEN_DISPS declares helpers at block scope that must resolve globally.
-// Layout (320x240): the 3D view top left, a column on the right (moon, map, where you are), a message bar,
-// and party cards along the bottom - all on black, as in the Famicom games.
+// The same screen as battles (RetroScreen): a top bar (place, facing, encounter gem, moon), the 3D view window
+// with the automap in its corner, the message window, and party cards along the bottom.
 static void DrawFieldHud(PlayState* play) {
     using namespace Retro;
     Party_EnsureCreated(kStartLevel);
-    const RetroRect view = kFieldView;
-    const int colX = view.x + view.w + 6, colW = SCREEN_WIDTH - 6 - colX; // right column
+    const RetroRect view = kView;
 
     OPEN_DISPS(play->state.gfxCtx);
     {
         Painter p(&OVERLAY_DISP);
         RetroScreen_DrawFrame(p, view);
-        MoonHud_DrawBox(p, colX, view.y - 2, 20, colW);
+
+        // Top bar
+        const int barY = 8;
+        p.Text(8, barY, SceneTitle(play), White);
+        p.Text(96, barY, "FACING", Green);
+        p.Text(96 + 7 * kCharW, barY, FacingName(DungeonCrawler_GetFacing()), Yellow);
+        static const char* kDanger[3] = { "CALM", "ALERT", "DANGER" };
+        static const Color kDangerColor[3] = { Blue, Yellow, Red };
+        int level = Battle_DangerLevel();
+        p.Text(176, barY, "◆", kDangerColor[level]);
+        p.Text(188, barY, kDanger[level], kDangerColor[level]);
+        const int moonW = MoonHud_BoxWidth(16);
+        MoonHud_DrawBox(p, SCREEN_WIDTH - 6 - moonW, 2, 16);
     }
     CLOSE_DISPS(play->state.gfxCtx);
 
-    // Map, filling a square box under the moon (or the large map over everything when toggled)
-    const int mapY = view.y + 26;
-    Automap_Draw(play, colX, mapY, colW);
+    // Automap in the view's top-right corner (or the large map over everything when toggled)
+    const int mapSize = 62;
+    Automap_Draw(play, view.x + view.w - mapSize - 2, view.y + 2, mapSize);
 
     OPEN_DISPS(play->state.gfxCtx);
     Painter p(&OVERLAY_DISP);
 
-    // Where you are: place, facing, how close the next encounter is
-    {
-        int y = mapY + colW + 4, h = view.y + view.h + 2 - y;
-        p.Window(colX, y, colW, h);
-        p.Text(colX + 6, y + 6, SceneTitle(play), White);
-        p.Text(colX + 6, y + 18, "FACING", Green);
-        p.Text(colX + 6 + 7 * kCharW, y + 18, FacingName(DungeonCrawler_GetFacing()), Yellow);
-        static const char* kDanger[3] = { "CALM", "ALERT", "DANGER" };
-        static const Color kDangerColor[3] = { Blue, Yellow, Red };
-        int level = Battle_DangerLevel();
-        p.Text(colX + 6, y + 30, "◆", kDangerColor[level]);
-        p.Text(colX + 18, y + 30, kDanger[level], kDangerColor[level]);
+    // Message window: the Full Moon announcement, otherwise empty like a Famicom message window
+    p.Window(6, kMessageY, SCREEN_WIDTH - 12, 28);
+    p.Text(14, kMessageY + 6, "▶", Green);
+    if (const char* note = MoonHud_NoticeText()) {
+        p.Text(26, kMessageY + 6, note, Violet);
     }
 
-    // Message bar: the Full Moon announcement, otherwise empty like a Famicom message window
-    {
-        int y = view.y + view.h + 6;
-        p.Window(6, y, SCREEN_WIDTH - 12, 18);
-        p.Text(14, y + 5, "▶", Green);
-        if (const char* note = MoonHud_NoticeText()) {
-            p.Text(26, y + 5, note, Violet);
-        }
-    }
-
-    // Party cards: portrait, name and condition, HP and MP, level
+    // Party cards: portrait, name and condition, HP, MP and level
     const std::vector<PartyMember>& members = Party_Members();
-    const int cardY = view.y + view.h + 28, cardH = SCREEN_HEIGHT - 4 - cardY;
+    const int cardY = kBottomY, cardH = SCREEN_HEIGHT - 4 - cardY;
     const int count = (int)std::min<size_t>(members.size(), 3);
     const int cardW = count > 0 ? (SCREEN_WIDTH - 12 - (count - 1) * 4) / count : 0;
     for (int i = 0; i < count; i++) {
         Combatant c = Party_Effective(members[i]);
         int x = 6 + i * (cardW + 4);
         p.Window(x, cardY, cardW, cardH);
-        if (!p.Portrait(c.name, x + 5, cardY + 5, 28)) {
-            p.Rect(x + 5, cardY + 5, 28, 28, GreenDark);
+        int portrait = cardH - 12;
+        if (!p.Portrait(c.name, x + 6, cardY + 6, portrait)) {
+            p.Rect(x + 6, cardY + 6, portrait, portrait, GreenDark);
         }
-        int tx = x + 38;
-        p.Text(tx, cardY + 5, Fit(Upper(c.name), 8), White);
-        const char* cond = c.ailment == Ailment::Poison ? "PSN" : (c.ailment == Ailment::Burn ? "BRN" : "");
-        if (*cond) {
-            p.TextRight(x + cardW - 5, cardY + 5, cond, c.ailment == Ailment::Poison ? Violet : Orange);
-        }
+        int tx = x + 12 + portrait;
+        p.Text(tx, cardY + 6, Fit(Upper(c.name), 8), White);
+        const char* cond = c.ailment == Ailment::Poison ? "PSN" : (c.ailment == Ailment::Burn ? "BRN" : "GOOD");
+        p.TextRight(x + cardW - 6, cardY + 6, cond,
+                    c.ailment == Ailment::Poison ? Violet : (c.ailment == Ailment::Burn ? Orange : Green));
         char line[24];
         snprintf(line, sizeof(line), "HP %d/%d", c.hp, c.maxHp);
-        p.Text(tx, cardY + 15, line, c.hp * 4 <= c.maxHp ? Red : White);
+        p.Text(tx, cardY + 17, line, c.hp * 4 <= c.maxHp ? Red : White);
         snprintf(line, sizeof(line), "MP %d/%d", c.mp, c.maxMp);
-        p.Text(tx, cardY + 25, line, White);
-        if (cardW >= 140) {
-            p.TextRight(x + cardW - 5, cardY + 25, "LV" + std::to_string(c.level), Green);
-        }
+        p.Text(tx, cardY + 28, line, White);
+        p.TextRight(x + cardW - 6, cardY + 28, "LV" + std::to_string(c.level), Green);
     }
 
     MoonHud_Tick();

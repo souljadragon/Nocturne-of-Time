@@ -249,3 +249,13 @@ bool BattleEnemyActor_Is(Actor* actor) {
 void BattleEnemyActor_SetFast(bool fast) {
     sFast = fast;
 }
+
+void BattleEnemyActor_SetSize(Actor* actor, float factor) {
+    BattleEnemy* self = (BattleEnemy*)actor;
+    // Deku Babas are drawn from their own stem geometry and are narrow anyway; resize the others
+    if (actor->params == (s16)Nocturne::EnemyKind::DekuBaba) {
+        return;
+    }
+    self->baseScale *= factor;
+    Actor_SetScale(actor, self->baseScale);
+}

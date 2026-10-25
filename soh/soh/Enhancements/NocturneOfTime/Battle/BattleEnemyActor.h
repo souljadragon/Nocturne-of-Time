@@ -17,3 +17,6 @@ bool BattleEnemyActor_Is(Actor* actor);
 
 // Auto-battle: animations and the defeat effect run at double speed.
 void BattleEnemyActor_SetFast(bool fast);
+
+// Shrink (or grow) an enemy, e.g. to fit a narrow corridor. Deku Babas keep their size.
+void BattleEnemyActor_SetSize(Actor* actor, float factor);
