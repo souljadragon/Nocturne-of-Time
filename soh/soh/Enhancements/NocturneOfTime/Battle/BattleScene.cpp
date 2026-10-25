@@ -59,8 +59,8 @@ constexpr int kMaxDrops = 2;         // per battle
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
-constexpr f32 kBossDistance = 300.0f;    // Queen Gohma stands further back: she's big
-constexpr f32 kBossMinDistance = 190.0f;
+constexpr f32 kBossDistance = 380.0f;    // Queen Gohma stands further back: she's big
+constexpr f32 kBossMinDistance = 220.0f;
 constexpr int kBossStartFrames = 25;     // after landing in the chamber
 constexpr int kHeartContainerHp = 8;     // max HP for everyone when a boss falls
 
@@ -209,6 +209,10 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
         }
     }
     DungeonCrawler_SetFacing(bestFacing);
+    if (boss) {
+        // Bosses need far more room than the 240 units the facing test looks at
+        bestDist = FreeDistance(play, player->actor.world.pos, (s16)(bestFacing * 0x4000), 600.0f);
+    }
 
     // Labels: "Deku Baba A", "Deku Baba B" when a kind repeats
     sScene.enemyLabels.clear();
@@ -234,7 +238,7 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     s16 yaw = (s16)(bestFacing * 0x4000);
     Vec3f fwd = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
     Vec3f right = { -Math_CosS(yaw), 0.0f, Math_SinS(yaw) };
-    f32 dist = boss ? CLAMP(bestDist - 110.0f, kBossMinDistance, kBossDistance)
+    f32 dist = boss ? CLAMP(bestDist - 120.0f, kBossMinDistance, kBossDistance)
                     : CLAMP(bestDist - 40.0f, kEnemyMinDistance, kEnemyDistance);
     // Space enemies by their size so wide ones (Skulltulas) don't overlap
     auto widthOf = [](int kind) -> f32 {
@@ -244,7 +248,7 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
             case EnemyKind::FireKeese:
                 return 46.0f;
             case EnemyKind::QueenGohma:
-                return 240.0f;
+                return 150.0f;
             default:
                 return 42.0f;
         }
@@ -380,8 +384,9 @@ void SpawnJoiningEnemy(PlayState* play, int index) {
     }
     const Combatant& c = sScene.battle->Enemies()[index];
     int k = index - 1; // the queen is enemy 0
-    static const f32 kLateral[] = { -95.0f, 95.0f, 0.0f, -170.0f, 170.0f };
-    static const f32 kCloser[] = { 70.0f, 70.0f, 110.0f, 40.0f, 40.0f };
+    // Out from under her, to either side and nearer the camera, so they're in plain view
+    static const f32 kLateral[] = { -125.0f, 125.0f, -200.0f, 200.0f, 0.0f };
+    static const f32 kCloser[] = { 130.0f, 130.0f, 60.0f, 60.0f, 190.0f };
     int slot = std::clamp(k, 0, 4);
     f32 d = std::max(60.0f, sScene.dist - kCloser[slot]);
     Vec3f pos = { sScene.origin.x + sScene.fwd.x * d + sScene.right.x * kLateral[slot], sScene.origin.y,

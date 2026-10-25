@@ -117,18 +117,19 @@ std::vector<ItemBase> BuildBases() {
              "A glass bead holding a small spark of spirit."),
         // Legendaries
         Legendary(100, "Biggoron's Edge", Slot::Weapon, Wielder::Link,
-                  { Mod(S::WeaponPower, 14), Mod(S::CritPct, 15), Mod(S::St, 2) }, UniqueEffect::None,
-                  "Critical hits come easily.", "The masterwork of the giant smith Biggoron.",
+                  { Mod(S::WeaponPower, 14), Mod(S::CritPct, 15), Mod(S::St, 2) }, UniqueEffect::PierceResist,
+                  "Cuts through any guard: foes that resist your attacks take full damage.",
+                  "The masterwork of the giant smith Biggoron.",
                   "Biggoron worked his forge atop Death Mountain for a year to make this blade, and swore he would "
                   "never make another. It never dulls, and the Gorons say it cuts truest under a full moon."),
         Legendary(101, "Fairy Ocarina of the Lost Woods", Slot::Weapon, Wielder::Saria,
-                  { Mod(S::MagicPower, 9), Mod(S::HealPct, 50), Mod(S::MaxMp, 10) }, UniqueEffect::None,
-                  "Healing songs restore half again as much.", "The first ocarina ever played in the Lost Woods.",
+                  { Mod(S::MagicPower, 9), Mod(S::HealPct, 50), Mod(S::MaxMp, 10) }, UniqueEffect::CleansingSong,
+                  "Healing songs also cure poison and burns.", "The first ocarina ever played in the Lost Woods.",
                   "Its songs once guided lost children home through the woods. Now they mend what the moon's curse "
                   "has broken, and the trees still lean in to listen."),
         Legendary(102, "Goron Tunic", Slot::Armor, Wielder::Link,
-                  { Mod(S::Vi, 6), Mod(S::MaxHp, 20), Mod(S::Resist, 0, Element::Fire) }, UniqueEffect::None,
-                  "Forged in Death Mountain: shrugs off flame.", "Fire-proof garb of the Goron smiths.",
+                  { Mod(S::Vi, 6), Mod(S::MaxHp, 20) }, UniqueEffect::FireDrain,
+                  "Absorbs Fire: flames heal the wearer instead of burning.", "Fire-proof garb of the Goron smiths.",
                   "Woven from stone fibre in the heat of Death Mountain. Darunia's people wear it to walk the "
                   "molten heart of the mountain, and it has never once let the fire through."),
         Legendary(103, "Mask of Truth", Slot::Accessory, Wielder::Anyone, { Mod(S::Lu, 4) },
@@ -315,6 +316,20 @@ Item RollItemOfRarity(int itemLevel, Rarity rarity, const LootRng& rng) {
         item.baseId = b.id;
         item.name = b.name;
         item.mods = b.mods;
+        // Its signature stats and power, plus two strong random affixes that grow with the item level
+        std::vector<const Affix*> fits;
+        for (const Affix& a : Affixes()) {
+            if (AffixFits(a, b) && !HasMod(b, a.kind) && a.kind != StatKind::Resist) {
+                fits.push_back(&a);
+            }
+        }
+        for (int n = 0; n < kLegendaryAffixes && !fits.empty(); n++) {
+            int pick = Pick((int)fits.size(), rng);
+            const Affix* a = fits[pick];
+            item.mods.push_back(
+                Mod(a->kind, std::max(1, (int)(AffixValue(a->kind, item.level) * kLegendaryAffixBoost + 0.5f))));
+            fits.erase(fits.begin() + pick);
+        }
         return item;
     }
 
@@ -481,6 +496,20 @@ void ApplyGear(Combatant& c, const std::vector<const Item*>& gear) {
                     break;
                 }
             }
+        }
+        // Legendary powers
+        switch (BaseOf(*item).effect) {
+            case UniqueEffect::PierceResist:
+                c.ignoreResist = true;
+                break;
+            case UniqueEffect::CleansingSong:
+                c.healCures = true;
+                break;
+            case UniqueEffect::FireDrain:
+                c.affinity[(size_t)Element::Fire] = Affinity::Drain;
+                break;
+            default:
+                break; // AutoAnalyze is checked by the battle scene
         }
     }
 }

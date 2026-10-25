@@ -91,7 +91,7 @@ static void TestAffixCounts() {
 
         Item l = RollItemOfRarity(4, Rarity::Legendary, Rng());
         CHECK(BaseOf(l).legendary);
-        CHECK(AffixCount(l) == 0);
+        CHECK(AffixCount(l) == kLegendaryAffixes);
         CHECK(l.name == BaseOf(l).name);
     }
 }
@@ -170,7 +170,7 @@ static void TestApplyGear() {
     CHECK(s2.AffinityTo(Element::Fire) == Affinity::Normal);
     Combatant l2 = link;
     ApplyGear(l2, { &goron });
-    CHECK(l2.AffinityTo(Element::Fire) == Affinity::Resist);
+    CHECK(l2.AffinityTo(Element::Fire) == Affinity::Drain); // its legendary power
     // Never weakens a better affinity (Saria drains Wind)
     Item gale = MakeCommon(20);
     gale.mods.push_back({ StatKind::Resist, 0, Element::Wind });
@@ -189,8 +189,8 @@ static void TestDescriptions() {
     std::printf("Descriptions\n");
     Item goron = MakeCommon(102);
     std::vector<std::string> lines = DescribeItem(goron);
-    CHECK(lines.size() == 3);
-    CHECK(lines[2] == "Resist Fire");
+    CHECK(lines.size() == 2); // Vitality, max HP (its Fire power is its effect text)
+    CHECK(!BaseOf(goron).effectText.empty());
     CHECK(DescribeMod({ StatKind::CritPct, 15 }) == "Critical +15%");
     CHECK(RarityColor(Rarity::Legendary).r == 255);
 }
@@ -422,6 +422,52 @@ static void TestSave() {
     Moon_Reset();
 }
 
+static void TestLegendaryPowers() {
+    std::printf("Legendary powers\n");
+    auto legend = [](int id) {
+        for (int i = 0; i < 500; i++) {
+            Item it = RollItemOfRarity(10, Rarity::Legendary, Rng());
+            if (it.baseId == id) {
+                return it;
+            }
+        }
+        return Item();
+    };
+    // Legendary affixes are stronger than a Rare's of the same level
+    Item tunic = legend(102);
+    CHECK(tunic.baseId == 102);
+    Combatant link = MakeLink(10);
+    Item tunicCopy = tunic;
+    ApplyGear(link, { &tunicCopy });
+    CHECK(link.AffinityTo(Element::Fire) == Affinity::Drain);
+
+    Item ocarina = legend(101);
+    Combatant saria = MakeSaria(10);
+    ApplyGear(saria, { &ocarina });
+    CHECK(saria.healCures);
+    Combatant hurt = MakeLink(10);
+    hurt.hp = 10;
+    hurt.ailment = Ailment::Poison;
+    Battle h({ saria, hurt }, { MakeEnemy(EnemyKind::DekuBaba) }, [] { return 0.5f; });
+    h.UseSkill(3, 1); // Song of Healing on Link
+    CHECK(h.Party()[1].ailment == Ailment::None && h.Party()[1].hp > 10);
+
+    Item edge = legend(100);
+    Combatant swordsman = MakeLink(10);
+    ApplyGear(swordsman, { &edge });
+    CHECK(swordsman.ignoreResist);
+    Combatant baba = MakeEnemy(EnemyKind::DekuBaba); // resists Strike, but Link's sword is Slash
+    Combatant skull = MakeEnemy(EnemyKind::Skulltula); // resists Slash
+    Battle e({ swordsman, MakeSaria(10) }, { skull }, [] { return 0.5f; });
+    Events ev = e.UseSkill(0, 0);
+    bool resisted = false;
+    for (const BattleEvent& x : ev) {
+        resisted |= x.type == BattleEvent::Type::Resist;
+    }
+    CHECK(!resisted);
+    (void)baba;
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -435,6 +481,7 @@ int main() {
     TestConsumables();
     TestMoon();
     TestSave();
+    TestLegendaryPowers();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

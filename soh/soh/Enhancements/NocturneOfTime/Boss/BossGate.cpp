@@ -47,12 +47,18 @@ void FindGate(PlayState* play, Player* player) {
         sHaveEntryPos = true;
         sEntryPos = SnapToTile(player->actor.world.pos);
     }
-    // The highest floor web in the lobby (room 0): the one on its ground floor
+    // The highest floor web in the dungeon: the one on the lobby's ground floor. (A web that hasn't run its
+    // init yet still has its spawn params, with the type in the top four bits.)
     Actor* best = NULL;
-    for (Actor* a = play->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
-        if (a->id == ACTOR_BG_YDAN_SP && a->params == kWebFloor && a->room == 0 &&
-            (best == NULL || a->world.pos.y > best->world.pos.y)) {
-            best = a;
+    for (s32 cat = 0; cat < ACTORCAT_MAX; cat++) {
+        for (Actor* a = play->actorCtx.actorLists[cat].head; a != NULL; a = a->next) {
+            if (a->id != ACTOR_BG_YDAN_SP) {
+                continue;
+            }
+            s16 type = a->init != NULL ? ((a->params >> 12) & 0xF) : a->params;
+            if (type == kWebFloor && (best == NULL || a->world.pos.y > best->world.pos.y)) {
+                best = a;
+            }
         }
     }
     if (best != NULL) {

@@ -55,8 +55,15 @@ struct StatMod {
 
 enum class UniqueEffect : uint8_t {
     None,
-    AutoAnalyze, // all foes' affinities are known at the start of a battle
+    AutoAnalyze,   // all foes' affinities are known at the start of a battle
+    PierceResist,  // the wearer's attacks treat Resist as a normal hit
+    CleansingSong, // the wearer's healing also cures ailments
+    FireDrain,     // the wearer absorbs Fire (and so can't be burned)
 };
+
+// Legendaries roll this many extra affixes, each this much stronger than on a Rare of the same level.
+constexpr int kLegendaryAffixes = 2;
+constexpr float kLegendaryAffixBoost = 1.5f;
 
 struct ItemBase {
     int id = 0;

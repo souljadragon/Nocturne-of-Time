@@ -443,12 +443,21 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
         def.hp = std::min(def.maxHp, def.hp + amount);
         out.push_back(Ev(BattleEvent::Type::Heal, userIsEnemy, userIndex, targetIsEnemy, target, def.hp - before,
                          def.name + " recovers " + std::to_string(def.hp - before) + " HP"));
+        if (user.healCures && def.ailment != Ailment::None) {
+            out.push_back(Ev(BattleEvent::Type::Message, userIsEnemy, userIndex, targetIsEnemy, target, 0,
+                             def.name + " is cured of " + std::string(AilmentName(def.ailment)) + "!"));
+            def.ailment = Ailment::None;
+            def.ailmentTurns = 0;
+        }
         return Outcome::Normal;
     }
 
     Affinity aff = skill.element == Element::Almighty ? Affinity::Normal : def.AffinityTo(skill.element);
     if (def.guarding && aff == Affinity::Weak) {
         aff = Affinity::Normal; // guarding covers a weakness
+    }
+    if (user.ignoreResist && aff == Affinity::Resist) {
+        aff = Affinity::Normal;
     }
 
     // Accuracy: only attacks that would connect can miss

@@ -89,6 +89,8 @@ struct Combatant {
     int magicPower = 0;
     float critBonus = 0.0f; // added to the critical chance of physical attacks
     float healBonus = 0.0f; // heals restore (1 + healBonus) times their power
+    bool ignoreResist = false; // Biggoron's Edge: Resist counts as a normal hit
+    bool healCures = false;    // Fairy Ocarina of the Lost Woods: heals also cure ailments
 
     int xpReward = 0;
     int rupeeMin = 0, rupeeMax = 0;
