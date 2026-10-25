@@ -263,7 +263,7 @@ std::array<float, 4> RarityOdds(DropSource source, float luck) {
         case DropSource::Common:
         default:
             // Mostly whites and blues, nearly even; purples are a rare treat; never Legendary
-            w = { 52.0f - 22.0f * luck, 44.0f + 14.0f * luck, 4.0f + 8.0f * luck, 0.0f };
+            w = { 52.0f - 27.0f * luck, 44.0f + 16.0f * luck, 4.0f + 11.0f * luck, 0.0f };
             break;
     }
     float total = w[0] + w[1] + w[2] + w[3];

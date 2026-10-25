@@ -293,7 +293,18 @@ static void TestConsumables() {
 static void TestMoon() {
     std::printf("Moon phases\n");
     Moon_Reset();
-    CHECK(Moon_Phase() == MoonPhase::New && Moon_Fullness() == 0.0f && Moon_EncounterScale() == 1.0f);
+    CHECK(Moon_Phase() == MoonPhase::New && Moon_Fullness() == 0.0f);
+    CHECK(Moon_EncounterScale() < 0.61f && !Moon_BlocksEscape() && Moon_DropScale() == 1.0f);
+    // New Moon: mostly lone enemies
+    auto counts = [] {
+        std::array<int, 4> n{};
+        for (int i = 0; i < 1000; i++) {
+            n[Moon_EnemyCount(i / 1000.0f)]++;
+        }
+        return n;
+    };
+    std::array<int, 4> dark = counts();
+    CHECK(dark[1] > dark[2] && dark[2] > dark[3] && dark[0] == 0);
     // New -> Full over 7 phases, back down to New over 7 more; each phase lasts kMoonStepsPerPhase steps
     std::vector<int> seen;
     int changes = 0;
@@ -312,11 +323,15 @@ static void TestMoon() {
         Moon_OnStep();
     }
     CHECK(Moon_Phase() == MoonPhase::Full && Moon_Fullness() == 1.0f && !Moon_Waxing());
-    CHECK(Moon_EncounterScale() > 1.59f && Moon_LootLuck() == 1.0f);
+    CHECK(Moon_EncounterScale() > 1.99f && Moon_LootLuck() == 1.0f && Moon_DropScale() > 1.59f);
+    CHECK(Moon_BlocksEscape());
+    // Full Moon: mostly packs of three, rarely alone
+    std::array<int, 4> bright = counts();
+    CHECK(bright[3] > bright[2] && bright[2] > bright[1] && bright[1] < 100);
     // A Full Moon tips common drops toward blue and purple, still never Legendary
     std::array<float, 4> full = RarityOdds(DropSource::Common, Moon_LootLuck());
-    std::array<float, 4> dark = RarityOdds(DropSource::Common, 0.0f);
-    CHECK(full[1] > dark[1] && full[2] > dark[2] && full[3] == 0.0f);
+    std::array<float, 4> noLuck = RarityOdds(DropSource::Common, 0.0f);
+    CHECK(full[1] > noLuck[1] && full[2] > noLuck[2] * 3 && full[3] == 0.0f);
     CHECK(std::string(MoonPhaseName(MoonPhase::Half)) == "Half Moon");
     Moon_Reset();
 }

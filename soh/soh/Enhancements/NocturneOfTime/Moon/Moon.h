@@ -24,7 +24,13 @@ bool Moon_OnStep();
 void Moon_Reset(); // back to New Moon
 
 // Effects of the current phase
-float Moon_EncounterScale(); // multiplies the danger gained per step: 1.0 at New Moon .. 1.6 at Full Moon
+float Moon_EncounterScale(); // multiplies the danger gained per step: 0.6 at New Moon .. 2.0 at Full Moon
 float Moon_LootLuck();       // rarity luck for drops: 0 .. 1
+float Moon_DropScale();      // multiplies the chance of an enemy dropping gear: 1.0 .. 1.6
+// Number of enemies in an encounter (1-3) for a uniform roll in [0, 1): mostly lone foes at New Moon, packs of
+// three at Full Moon.
+int Moon_EnemyCount(float roll);
+// Full Moon: the monsters are frenzied and the party can't run.
+bool Moon_BlocksEscape();
 
 } // namespace Nocturne

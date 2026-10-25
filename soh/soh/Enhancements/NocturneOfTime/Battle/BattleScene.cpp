@@ -176,8 +176,7 @@ f32 FreeDistance(PlayState* play, const Vec3f& from, s16 yaw, f32 maxDist) {
 }
 
 std::vector<EnemyKind> RollEncounter() {
-    f32 r = Rand_ZeroOne();
-    int count = r < 0.4f ? 1 : (r < 0.8f ? 2 : 3);
+    int count = Moon_EnemyCount(Rand_ZeroOne()); // fuller moon, bigger packs
     std::vector<EnemyKind> kinds;
     for (int i = 0; i < count; i++) {
         kinds.push_back((EnemyKind)(int)(Rand_ZeroOne() * (f32)EnemyKind::Count * 0.9999f));
@@ -348,6 +347,10 @@ void StartBattle(PlayState* play, Player* player) {
     sScene.timer = 0;
     sScene.message = enemies.size() == 1 ? "A " + enemies[0].name + " appears!" : "Enemies appear!";
     sScene.messageColor = 0;
+    if (Moon_BlocksEscape()) {
+        sScene.message += "\nThe full moon has driven them mad!";
+        sScene.messageColor = 0xC8A0FF00u; // violet
+    }
     sScene.showingMessage = true;
     PlaySfx(NA_SE_SY_FSEL_DECIDE_L);
 }
@@ -460,7 +463,7 @@ void QueueRewards() {
     }
     LootRng rng = [] { return Rand_ZeroOne() * 0.99999f; };
     for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops; i++) {
-        if (Rand_ZeroOne() < kDropChance) {
+        if (Rand_ZeroOne() < kDropChance * Moon_DropScale()) {
             Item item = RollItem(itemLevel, DropSource::Common, Moon_LootLuck(), rng); // only common enemies so far
             Party_Bag().push_back(item);
             drops++;
@@ -831,6 +834,16 @@ void HandleInput(const Buttons& in) {
                         BattleEnemyActor_SetFast(true);
                         break;
                     case CMD_RUN:
+                        if (Moon_BlocksEscape()) {
+                            // Frenzied by the full moon, the monsters won't let the party go (costs no turn)
+                            PlaySfx(NA_SE_SY_ERROR);
+                            BattleEvent e;
+                            e.type = BattleEvent::Type::Message;
+                            e.text = "The full moon frenzies them. There's no escape!";
+                            e.color = 0xC8A0FF00u;
+                            Queue({ e });
+                            break;
+                        }
                         PlaySfx(NA_SE_SY_DECIDE);
                         Queue(b.Run());
                         break;
@@ -1306,7 +1319,7 @@ void Battle_DrawUi(PlayState* play) {
 
     text(10 + icons.Total() * 13 + 4, iconY + 1, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
     if (sScene.autoBattle) {
-        text(SCREEN_WIDTH - 10 - 24 - 8 - 12 * 8, iconY + 1, "AUTO  B:Stop", 110, 230, 120);
+        text(SCREEN_WIDTH - 10 - MoonHud_BattleDialWidth() - 8 - 12 * 8, iconY + 1, "AUTO  B:Stop", 110, 230, 120);
     }
 
     if (sScene.showingMessage) {
@@ -1328,7 +1341,7 @@ void Battle_DrawUi(PlayState* play) {
     if (commandUi) {
         for (int i = 0; i < CMD_COUNT; i++) {
             option(cmdX + 2, cmdY + 3 + i * 10, kCommandNames[i], sScene.ui == Ui::Command && i == sScene.commandCursor,
-                   true);
+                   !(i == CMD_RUN && Moon_BlocksEscape())); // no running from a full-moon fight
         }
     }
 
