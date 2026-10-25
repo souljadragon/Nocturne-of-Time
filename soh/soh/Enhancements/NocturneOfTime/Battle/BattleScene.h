@@ -9,6 +9,14 @@ struct Player;
 
 bool Battle_IsActive();
 
+// For saving and loading: forget per-save battle state (bestiary, encounter meter); the enemy kinds whose
+// affinities Navi has analysed.
+void Battle_ResetForLoad();
+#ifdef __cplusplus
+#include <set>
+std::set<int>& Battle_Bestiary();
+#endif
+
 // The crawler finished a step: fill the danger meter and maybe start a battle.
 void Battle_OnStep(PlayState* play, Player* player);
 

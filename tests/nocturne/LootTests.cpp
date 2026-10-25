@@ -1,13 +1,15 @@
 // Nocturne of Time: unit tests for loot generation, gear, consumables and the moon. Not part of the game build.
 // Build and run (from this folder):
 //   N=../../soh/soh/Enhancements/NocturneOfTime
-//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Moon/Moon.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
+//   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Moon/Moon.cpp \
+//       $N/Save/NocturneSave.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
 //   ./loot_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Loot/Loot.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Party.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Moon/Moon.h"
+#include "../../soh/soh/Enhancements/NocturneOfTime/Save/NocturneSave.h"
 
 #include <array>
 #include <cstdio>
@@ -336,6 +338,89 @@ static void TestMoon() {
     Moon_Reset();
 }
 
+static void TestSave() {
+    std::printf("Save and load\n");
+    Party_Reset();
+    Moon_Reset();
+    Party_EnsureCreated(5);
+    std::vector<PartyMember>& members = Party_Members();
+    // Make the state distinctive: hurt, levelled, poisoned/burned, new gear, items, a later moon
+    members[0].base.level = 9;
+    members[0].base.st = 21;
+    members[0].xp = 1234;
+    members[0].unspentStatPoints = 2;
+    members[0].base.hp = 7;
+    members[0].base.ailment = Ailment::Poison;
+    members[1].base.mp = 3;
+    members[1].base.ailment = Ailment::Burn;
+    members[1].base.ailmentTurns = 2;
+    for (int i = 0; i < 6; i++) {
+        Party_Bag().push_back(RollItem(6, DropSource::Elite, 0.5f, Rng()));
+    }
+    Party_Bag().push_back(MakeCommon(2));
+    CHECK(Party_Equip(0, (int)Party_Bag().size() - 1)); // Hylian Blade on Link
+    Party_AddConsumable(ConsumableId::LonLonMilk, 4);
+    Moon_SetState(5, 11);
+
+    const std::vector<PartyMember> before = members;
+    const std::vector<Item> bagBefore = Party_Bag();
+    const auto stockBefore = Party_Consumables();
+    nlohmann::json saved = Save_Write();
+    CHECK(saved["version"] == kSaveVersion);
+
+    // Through text, as on disk, into a clean state
+    nlohmann::json reread = nlohmann::json::parse(saved.dump());
+    Party_Reset();
+    Moon_Reset();
+    Save_Read(reread);
+
+    CHECK(members.size() == before.size());
+    for (size_t m = 0; m < members.size() && m < before.size(); m++) {
+        const Combatant& a = members[m].base;
+        const Combatant& b = before[m].base;
+        CHECK(a.name == b.name && a.level == b.level && a.hp == b.hp && a.mp == b.mp && a.maxHp == b.maxHp);
+        CHECK(a.st == b.st && a.ma == b.ma && a.vi == b.vi && a.ag == b.ag && a.lu == b.lu);
+        CHECK(members[m].xp == before[m].xp && members[m].unspentStatPoints == before[m].unspentStatPoints);
+        for (size_t s = 0; s < (size_t)Slot::Count; s++) {
+            CHECK(members[m].gear[s].has_value() == before[m].gear[s].has_value());
+            if (members[m].gear[s] && before[m].gear[s]) {
+                CHECK(members[m].gear[s]->uid == before[m].gear[s]->uid);
+                CHECK(members[m].gear[s]->name == before[m].gear[s]->name);
+            }
+        }
+    }
+    CHECK(members[0].base.ailment == Ailment::Poison); // poison lasts
+    CHECK(members[1].base.ailment == Ailment::None);   // a burn is over once the battle is
+    CHECK(Party_Effective(members[0]).weaponPower == 6);
+
+    CHECK(Party_Bag().size() == bagBefore.size());
+    for (size_t i = 0; i < Party_Bag().size() && i < bagBefore.size(); i++) {
+        const Item& a = Party_Bag()[i];
+        const Item& b = bagBefore[i];
+        CHECK(a.uid == b.uid && a.baseId == b.baseId && a.rarity == b.rarity && a.level == b.level && a.name == b.name);
+        CHECK(a.mods.size() == b.mods.size());
+        CHECK(DescribeItem(a) == DescribeItem(b));
+    }
+    CHECK(Party_Consumables() == stockBefore);
+    CHECK(Moon_CyclePos() == 5 && Moon_StepsInPhase() == 11);
+
+    // New drops never reuse a saved item's number
+    uint32_t maxUid = 0;
+    for (const Item& it : Party_Bag()) {
+        maxUid = std::max(maxUid, it.uid);
+    }
+    CHECK(RollItem(3, DropSource::Common, 0.0f, Rng()).uid > maxUid);
+
+    // Damaged or foreign data starts fresh instead of crashing
+    Save_Read(nlohmann::json::parse("{\"party\": 5, \"bag\": [{\"x\": 1}], \"moon\": \"full\"}"));
+    CHECK(Party_Members().empty() && Party_Bag().empty());
+    CHECK(Moon_CyclePos() == 0);
+    Save_Read(nlohmann::json());
+    CHECK(Party_Members().empty());
+    Party_Reset();
+    Moon_Reset();
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -348,6 +433,7 @@ int main() {
     TestLore();
     TestConsumables();
     TestMoon();
+    TestSave();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

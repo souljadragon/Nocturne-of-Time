@@ -104,6 +104,10 @@ Item MakeCommon(int baseId);
 
 bool CanEquip(const Item& item, const std::string& memberName);
 
+// Item ids: the next one handed out (saved so loaded items keep unique ids).
+uint32_t Loot_NextUid();
+void Loot_SetNextUid(uint32_t uid);
+
 // Apply equipped items to a combatant's stats (call on a copy of the member's base stats).
 void ApplyGear(Combatant& c, const std::vector<const Item*>& gear);
 

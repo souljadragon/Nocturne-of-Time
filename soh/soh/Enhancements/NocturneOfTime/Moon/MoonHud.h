@@ -9,6 +9,8 @@ class Painter;
 
 // Count a dungeon step toward the next phase (called by the crawler on each completed step).
 void MoonHud_OnStep();
+// Forget a pending pulse / message (loading a save).
+void MoonHud_ResetNotice();
 // Advance the change pulse; call once per drawn frame.
 void MoonHud_Tick();
 // Width of the moon window for a sprite of `size` pixels.

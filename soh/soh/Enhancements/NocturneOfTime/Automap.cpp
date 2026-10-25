@@ -216,12 +216,7 @@ void RegisterAutomap() {
         }
     });
 
-    // Maps belong to a save file
-    COND_HOOK(OnLoadGame, enabled, [](int32_t) {
-        sMaps.clear();
-        sLarge = false;
-        sHasLast = false;
-    });
+    // Maps belong to a save file: Save/SaveHooks resets and reloads them (Automap_Reset / Automap_Load)
 }
 
 } // namespace
@@ -273,6 +268,43 @@ void Automap_Update(PlayState* play, Player* player) {
 
 void Automap_ToggleLarge() {
     sLarge = !sLarge;
+}
+
+void Automap_Reset() {
+    sMaps.clear();
+    sLarge = false;
+    sHasLast = false;
+}
+
+nlohmann::json Automap_Save() {
+    // { "<scene>": [[x, z, floor, walls, doors], ...] }
+    nlohmann::json out = nlohmann::json::object();
+    for (const auto& [scene, cells] : sMaps) {
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& [key, cell] : cells) {
+            list.push_back({ key.x, key.z, key.floor, cell.walls, cell.doors });
+        }
+        out[std::to_string(scene)] = list;
+    }
+    return out;
+}
+
+void Automap_Load(const nlohmann::json& data) {
+    Automap_Reset();
+    if (!data.is_object()) {
+        return;
+    }
+    for (const auto& [sceneKey, list] : data.items()) {
+        if (!list.is_array()) {
+            continue;
+        }
+        FloorMap& cells = sMaps[(s16)std::stoi(sceneKey)];
+        for (const auto& c : list) {
+            if (c.is_array() && c.size() >= 5) {
+                cells[{ c[0].get<s32>(), c[1].get<s32>(), c[2].get<s32>() }] = { c[3].get<u8>(), c[4].get<u8>() };
+            }
+        }
+    }
 }
 
 bool Automap_IsLarge() {

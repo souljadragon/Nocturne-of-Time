@@ -23,6 +23,11 @@ float Moon_Fullness(); // 0 at New Moon .. 1 at Full Moon
 bool Moon_OnStep();
 void Moon_Reset(); // back to New Moon
 
+// Position in the cycle (0 .. kMoonCycleLength - 1) and steps taken in this phase, for saving.
+int Moon_CyclePos();
+int Moon_StepsInPhase();
+void Moon_SetState(int cyclePos, int stepsInPhase);
+
 // Effects of the current phase
 float Moon_EncounterScale(); // multiplies the danger gained per step: 0.6 at New Moon .. 2.0 at Full Moon
 float Moon_LootLuck();       // rarity luck for drops: 0 .. 1

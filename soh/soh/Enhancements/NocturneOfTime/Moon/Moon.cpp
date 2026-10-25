@@ -52,6 +52,19 @@ bool Moon_OnStep() {
     return true;
 }
 
+int Moon_CyclePos() {
+    return sCycle;
+}
+
+int Moon_StepsInPhase() {
+    return sSteps;
+}
+
+void Moon_SetState(int cyclePos, int stepsInPhase) {
+    sCycle = ((cyclePos % kMoonCycleLength) + kMoonCycleLength) % kMoonCycleLength;
+    sSteps = stepsInPhase < 0 ? 0 : (stepsInPhase >= kMoonStepsPerPhase ? kMoonStepsPerPhase - 1 : stepsInPhase);
+}
+
 void Moon_Reset() {
     sCycle = 0;
     sSteps = 0;

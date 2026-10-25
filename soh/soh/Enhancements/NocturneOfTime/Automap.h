@@ -16,3 +16,9 @@ void Automap_ToggleLarge();
 void Automap_Draw(PlayState* play, int x, int y, int size);
 // Is the large map up?
 bool Automap_IsLarge();
+
+// Explored maps belong to a save file
+#include <nlohmann/json.hpp>
+void Automap_Reset();
+nlohmann::json Automap_Save();
+void Automap_Load(const nlohmann::json& data);

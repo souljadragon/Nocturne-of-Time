@@ -408,6 +408,14 @@ Item RollItem(int itemLevel, DropSource source, float luck, const LootRng& rng) 
     return RollItemOfRarity(itemLevel, RollRarity(source, luck, rng), rng);
 }
 
+uint32_t Loot_NextUid() {
+    return sNextUid;
+}
+
+void Loot_SetNextUid(uint32_t uid) {
+    sNextUid = uid < 1 ? 1 : uid;
+}
+
 bool CanEquip(const Item& item, const std::string& memberName) {
     const ItemBase& b = BaseOf(item);
     switch (b.wielder) {

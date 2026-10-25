@@ -51,14 +51,15 @@ const char* ShortName(MoonPhase p) {
 
 void RegisterMoonHud() {
     bool enabled = CVAR_CRAWLER_VALUE != 0;
-    // The moon belongs to the play session: a loaded save starts at New Moon (saving comes later)
-    COND_HOOK(OnLoadGame, enabled, [](int32_t) {
-        Moon_Reset();
-        sNotice = 0;
-    });
+    // The moon is saved with the file (Save/SaveHooks); nothing to do here
+    (void)enabled;
 }
 
 } // namespace
+
+void MoonHud_ResetNotice() {
+    sNotice = 0;
+}
 
 void MoonHud_OnStep() {
     if (Moon_OnStep()) {

@@ -989,17 +989,22 @@ void RegisterBattleScene() {
         sLastScene = sceneNum;
     });
 
-    COND_HOOK(OnLoadGame, enabled, [](int32_t) {
-        Party_Reset();
-        sAnalyzedKinds.clear();
-        sDanger = 0;
-        sLastScene = -1;
-    });
+    // Loading a save: Save/SaveHooks resets everything (Battle_ResetForLoad) and then applies the save
 }
 
 } // namespace
 
 // ---- Public ---------------------------------------------------------------------------------------------
+
+void Battle_ResetForLoad() {
+    sAnalyzedKinds.clear();
+    sDanger = 0;
+    sLastScene = -1;
+}
+
+std::set<int>& Battle_Bestiary() {
+    return sAnalyzedKinds;
+}
 
 bool Battle_IsActive() {
     return sScene.ui != Ui::None;
