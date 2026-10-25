@@ -12238,8 +12238,9 @@ void Player_Update(Actor* thisx, PlayState* play) {
             }
         }
 
-        // Nocturne of Time: let the dungeon-crawler mode read and filter Link's input
-        GameInteractor_Should(VB_PLAYER_FILTER_INPUT, true, this, &input);
+        // Nocturne of Time: let the dungeon-crawler mode read and filter Link's input (and, during battles,
+        // skip Link's own update so he doesn't animate, fidget or make sounds)
+        bool runPlayerUpdate = GameInteractor_Should(VB_PLAYER_FILTER_INPUT, true, this, &input);
 
         if (CVarGetFloat(CVAR_CHEAT("SpeedModifier.Value"), 1.0f) != 1.0f &&
             CVarGetInteger(CVAR_CHEAT("SpeedModifier.SpeedToggle"), 0)) {
@@ -12251,7 +12252,9 @@ void Player_Update(Actor* thisx, PlayState* play) {
             }
         }
 
-        Player_UpdateCommon(this, play, &input);
+        if (runPlayerUpdate) {
+            Player_UpdateCommon(this, play, &input);
+        }
     }
 
     MREG(52) = this->actor.world.pos.x;

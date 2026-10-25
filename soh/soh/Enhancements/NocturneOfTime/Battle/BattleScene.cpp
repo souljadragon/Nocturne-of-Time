@@ -84,6 +84,8 @@ struct Scene {
 
     int stickDir = 0; // last stick direction for edge detection: 0 none, 1 up, 2 down, 3 left, 4 right
     int damageFlash = 0;
+    int impactFlash = 0;   // white flash for weaknesses and criticals
+    bool showSkillInfo = false; // Z in the skill list
 };
 
 Scene sScene;
@@ -328,6 +330,19 @@ void QueueRewards() {
 
 // ---- Events -> messages and effects ---------------------------------------------------------------------
 
+// A heavy hit: camera shake, controller rumble, a white flash and a weighty sound.
+void Impact(bool critical) {
+    if (gPlayState != NULL) {
+        s16 quake = Quake_Add(Play_GetCamera(gPlayState, CAM_ID_MAIN), 3);
+        Quake_SetSpeed(quake, 20000);
+        Quake_SetQuakeValues(quake, critical ? 6 : 4, 0, 0, 0);
+        Quake_SetCountdown(quake, critical ? 8 : 6);
+    }
+    Rumble_Request(0.0f, critical ? 255 : 200, critical ? 14 : 10, 150);
+    sScene.impactFlash = critical ? 4 : 3;
+    PlaySfx(critical ? NA_SE_IT_HAMMER_HIT : NA_SE_IT_SWORD_STRIKE_HARD);
+}
+
 void PlayEventEffects(const BattleEvent& e) {
     auto enemyActor = [](int i) -> Actor* {
         return (i >= 0 && i < (int)sScene.enemyActors.size()) ? sScene.enemyActors[i] : NULL;
@@ -346,7 +361,7 @@ void PlayEventEffects(const BattleEvent& e) {
             break;
         case BattleEvent::Type::Weak:
         case BattleEvent::Type::Critical:
-            PlaySfx(NA_SE_SY_CORRECT_CHIME);
+            Impact(e.type == BattleEvent::Type::Critical);
             break;
         case BattleEvent::Type::Miss:
         case BattleEvent::Type::Null:
@@ -371,7 +386,8 @@ void PlayEventEffects(const BattleEvent& e) {
                 sAnalyzedKinds.insert(c.kind);
                 BattleEvent detail;
                 detail.type = BattleEvent::Type::Message;
-                detail.text = c.name + ": " + AffinitySummary(c);
+                detail.text = c.name + "  HP " + std::to_string(c.hp) + "/" + std::to_string(c.maxHp) + "\n" +
+                              AffinitySummary(c);
                 detail.hold = true;
                 sScene.queue.push_front(detail);
             }
@@ -447,7 +463,7 @@ void Proceed() {
 // ---- Input ----------------------------------------------------------------------------------------------
 
 struct Buttons {
-    bool up = false, down = false, left = false, right = false, a = false, b = false;
+    bool up = false, down = false, left = false, right = false, a = false, b = false, z = false;
 };
 
 Buttons ReadButtons(Input* input) {
@@ -472,6 +488,7 @@ Buttons ReadButtons(Input* input) {
     out.right = (press.button & BTN_DRIGHT) || (newStick && dir == 4);
     out.a = press.button & BTN_A;
     out.b = press.button & BTN_B;
+    out.z = press.button & BTN_Z;
     return out;
 }
 
@@ -574,6 +591,9 @@ void HandleInput(const Buttons& in) {
                 int i = sScene.skillCursor - 1;
                 i = (i + (in.up ? count - 1 : 1)) % count;
                 sScene.skillCursor = i + 1;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else if (in.z) {
+                sScene.showSkillInfo = !sScene.showSkillInfo;
                 PlaySfx(NA_SE_SY_CURSOR);
             } else if (in.a) {
                 ChooseSkill(sScene.skillCursor);
@@ -704,6 +724,9 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
     if (sScene.damageFlash > 0) {
         sScene.damageFlash--;
     }
+    if (sScene.impactFlash > 0) {
+        sScene.impactFlash--;
+    }
 
     switch (sScene.ui) {
         case Ui::Intro:
@@ -796,18 +819,23 @@ void Battle_DrawUi(PlayState* play) {
     // them, party along the bottom. The middle of the screen is left to the enemies.
     const int iconY = 16;
     const int msgX = 10, msgY = 32, msgW = SCREEN_WIDTH - 20;
-    const size_t msgChars = (size_t)(msgW - 24) / 8;
+    const size_t msgChars = (size_t)(msgW - 8) / 8; // 36 characters
     // Long messages wrap onto a second line at a space
     std::string msg1 = sScene.message, msg2;
-    if (msg1.size() > msgChars) {
+    size_t newline = msg1.find('\n');
+    if (newline != std::string::npos) {
+        msg2 = msg1.substr(newline + 1, msgChars);
+        msg1 = msg1.substr(0, newline);
+    }
+    if (msg2.empty() && msg1.size() > msgChars) {
         size_t cut = msg1.rfind(' ', msgChars);
         cut = (cut == std::string::npos) ? msgChars : cut;
         msg2 = msg1.substr(cut + 1, msgChars);
         msg1 = msg1.substr(0, cut);
     }
     const int msgH = msg2.empty() ? 14 : 24;
-    const int cmdX = 10, cmdY = 134, cmdW = 76, cmdH = CMD_COUNT * 10 + 4;
-    const int listX = 92, listW = SCREEN_WIDTH - 102, listBottom = cmdY + cmdH;
+    const int cmdX = 10, cmdY = 134, cmdW = 70, cmdH = CMD_COUNT * 10 + 4;
+    const int listX = 84, listW = SCREEN_WIDTH - 94, listBottom = cmdY + cmdH;
     const int partyX = 10, partyY = 204, partyW = SCREEN_WIDTH - 20, partyH = 30;
     const int colW = partyW / 2;
 
@@ -825,12 +853,38 @@ void Battle_DrawUi(PlayState* play) {
     int listH = listRows * 10 + 4;
     int listY = listBottom - listH;
 
+    // Skill info (Z): description wrapped to two lines plus a stats line, above the skill list
+    const size_t infoChars = (size_t)(listW - 8) / 8;
+    std::string info1, info2, info3;
+    bool showInfo = sScene.ui == Ui::Skills && sScene.showSkillInfo && sScene.skillCursor > 0 &&
+                    sScene.skillCursor < (int)active.skills.size();
+    if (showInfo) {
+        const Skill& sk = active.skills[sScene.skillCursor];
+        info1 = sk.description;
+        if (info1.size() > infoChars) {
+            size_t cut = info1.rfind(' ', infoChars);
+            cut = (cut == std::string::npos) ? infoChars : cut;
+            info2 = info1.substr(cut + 1, infoChars);
+            info1 = info1.substr(0, cut);
+        }
+        const char* who = sk.target == TargetType::OneEnemy     ? "One foe"
+                          : sk.target == TargetType::AllEnemies ? "All foes"
+                          : sk.target == TargetType::OneAlly    ? "One ally"
+                                                                : "Party";
+        info3 = std::string(sk.heal ? "Heals " : "Power ") + std::to_string(sk.power) + "  " + who;
+    }
+    const int infoH = 34;
+    const int infoY = listY - infoH - 4;
+
     OPEN_DISPS(play->state.gfxCtx);
     Gfx* gfx = OVERLAY_DISP;
     gSPDisplayList(gfx++, sBattleRectDL);
 
     if (sScene.damageFlash > 0) {
         Rect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 30, 20, (u8)(sScene.damageFlash * 18));
+    }
+    if (sScene.impactFlash > 0) {
+        Rect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 255, 255, (u8)(sScene.impactFlash * 30));
     }
 
     // Press Turn icons: blue for the party, red for enemies; blinking icons flash
@@ -854,6 +908,9 @@ void Battle_DrawUi(PlayState* play) {
     }
     if (listRows > 0) {
         Panel(&gfx, listX, listY, listW, listH);
+    }
+    if (showInfo) {
+        Panel(&gfx, listX, infoY, listW, infoH);
     }
 
     // Party: one column per member; the one choosing a command is lit up
@@ -897,7 +954,7 @@ void Battle_DrawUi(PlayState* play) {
             text(msgX + msgW / 2 - (int)msg2.size() * 4, msgY + 13, msg2, 255, 255, 255);
         }
         if (sScene.messageHeld && blinkOn) {
-            text(msgX + msgW - 12, msgY + 3, "A", 120, 220, 120);
+            text(msgX + msgW - 10, msgY + msgH + 2, "A", 120, 220, 120); // below the box, clear of the text
         }
     }
 
@@ -911,19 +968,29 @@ void Battle_DrawUi(PlayState* play) {
     if (sScene.ui == Ui::Skills) {
         for (int i = 1; i < (int)active.skills.size(); i++) {
             const Skill& s = active.skills[i];
+            int y = listY + 3 + (i - 1) * 10;
+            bool sel = i == sScene.skillCursor;
+            bool usable = b.CanUseSkill(i);
+            u8 shade = usable ? 210 : 100;
+            u8 r = sel ? 255 : shade, g = sel ? 230 : shade, bl = sel ? 90 : shade;
+            // Columns: name, element (or "Heal"), cost right-aligned
             std::string cost = s.mpCost > 0 ? std::to_string(s.mpCost) + "MP"
                                             : (s.hpCost > 0 ? std::to_string(s.hpCost) + "HP" : "");
-            std::string line = s.name;
-            while (line.size() < 15) {
-                line += ' ';
-            }
-            line += std::string(ElementName(s.element)).substr(0, 6);
-            while (line.size() < 21) {
-                line += ' ';
-            }
-            line += cost;
-            option(listX + 2, listY + 3 + (i - 1) * 10, line, i == sScene.skillCursor, b.CanUseSkill(i));
+            std::string element = s.heal ? "Heal" : ElementName(s.element);
+            text(listX + 2, y, std::string(sel ? ">" : " ") + s.name, r, g, bl);
+            text(listX + 2 + 17 * 8, y, element.substr(0, 6), r, g, bl);
+            text(listX + listW - 4 - (int)cost.size() * 8, y, cost, r, g, bl);
         }
+    }
+
+    if (showInfo) {
+        text(listX + 4, infoY + 3, info1, 235, 235, 235);
+        if (!info2.empty()) {
+            text(listX + 4, infoY + 12, info2, 235, 235, 235);
+        }
+        text(listX + 4, infoY + 23, info3, 150, 200, 255);
+    } else if (sScene.ui == Ui::Skills) {
+        text(listX + listW - 9 * 8, listY - 10, "Z: Info", 150, 150, 150);
     }
 
     if (sScene.ui == Ui::TargetEnemy) {

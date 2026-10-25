@@ -350,11 +350,12 @@ void ClearMovementInput(Input* input) {
     }
 }
 
-void OnFilterInput(Player* player, Input* input) {
+// Returns false to skip Link's own update this frame (during battles).
+bool OnFilterInput(Player* player, Input* input) {
     PlayState* play = gPlayState;
     if (play == NULL || !SceneAllowed(play) || PlayerBusy(player)) {
         Deactivate(player);
-        return;
+        return true;
     }
     if (!sCrawler.active) {
         Activate(player);
@@ -375,7 +376,7 @@ void OnFilterInput(Player* player, Input* input) {
         player->yaw = sCrawler.curYaw;
         player->actor.world.rot.y = sCrawler.curYaw;
         player->actor.shape.rot.y = sCrawler.curYaw;
-        return;
+        return false; // Link stays frozen: no idle animation, fidgets or their sounds
     }
 
     const OSContPad& cur = input->cur;
@@ -426,7 +427,7 @@ void OnFilterInput(Player* player, Input* input) {
             pad->stick_y = 80;
         }
         UpdateAction(player);
-        return;
+        return true;
     }
 
     UpdateAction(player);
@@ -437,6 +438,7 @@ void OnFilterInput(Player* player, Input* input) {
     player->yaw = sCrawler.curYaw;
     player->actor.world.rot.y = sCrawler.curYaw;
     player->actor.shape.rot.y = sCrawler.curYaw;
+    return true;
 }
 
 bool OnCameraUpdate(Camera* camera) {
@@ -477,7 +479,7 @@ void RegisterDungeonCrawler() {
     COND_VB_SHOULD(VB_PLAYER_FILTER_INPUT, enabled, {
         Player* player = va_arg(args, Player*);
         Input* input = va_arg(args, Input*);
-        OnFilterInput(player, input);
+        *should = OnFilterInput(player, input);
     });
 
     COND_VB_SHOULD(VB_CAMERA_RUN_SETTING_FUNC, enabled, {

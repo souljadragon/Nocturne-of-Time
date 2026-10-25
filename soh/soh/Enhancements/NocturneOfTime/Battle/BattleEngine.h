@@ -46,6 +46,7 @@ struct Skill {
     int mpCost = 0;
     int hpCost = 0;      // flat HP cost (physical techniques)
     float accuracy = 0.95f;
+    std::string description; // shown in the skill menu
 };
 
 struct Combatant {

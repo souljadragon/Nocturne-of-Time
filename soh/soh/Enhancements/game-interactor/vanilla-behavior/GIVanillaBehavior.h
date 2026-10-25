@@ -4224,6 +4224,7 @@ typedef enum {
     // ```
     // Fired every Player_Update with the controller input Link is about to act on.
     // Handlers may read and edit the input (e.g. clear the stick) before Link sees it.
+    // Returning false skips Link's update for the frame (Player_UpdateCommon).
     // #### `args`
     // - `Player*` player
     // - `Input*` input

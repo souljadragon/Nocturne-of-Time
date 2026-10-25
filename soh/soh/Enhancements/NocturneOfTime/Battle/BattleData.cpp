@@ -28,6 +28,11 @@ Skill Make(const char* name, Element element, TargetType target, int power, int 
     return s;
 }
 
+Skill Describe(Skill s, const char* description) {
+    s.description = description;
+    return s;
+}
+
 void SetAffinity(Combatant& c, Element e, Affinity a) {
     c.affinity[(size_t)e] = a;
 }
@@ -55,9 +60,11 @@ Combatant MakeLink(int level) {
     c.ag = 5;
     c.lu = 5;
     c.skills = {
-        Attack(Element::Slash, 12),
-        Make("Spin Attack", Element::Slash, TargetType::AllEnemies, 9, 0, 6),
-        Make("Slingshot", Element::Pierce, TargetType::OneEnemy, 10, 0, 0, 0.9f),
+        Describe(Attack(Element::Slash, 12), "A sword strike."),
+        Describe(Make("Spin Attack", Element::Slash, TargetType::AllEnemies, 9, 0, 6),
+                 "A whirling slash that hits every foe. Costs a little HP."),
+        Describe(Make("Slingshot", Element::Pierce, TargetType::OneEnemy, 10, 0, 0, 0.9f),
+                 "A Deku Seed shot. Pierces; good against fliers."),
     };
     GrowTo(c, level);
     return c;
@@ -79,11 +86,14 @@ Combatant MakeSaria(int level) {
     SetAffinity(c, Element::Strike, Affinity::Resist);
     SetAffinity(c, Element::Fire, Affinity::Weak);
     c.skills = {
-        Attack(Element::Strike, 8),
-        Make("Gale", Element::Wind, TargetType::OneEnemy, 14, 4),
-        Make("Forest Gust", Element::Wind, TargetType::AllEnemies, 9, 8),
-        Make("Song of Healing", Element::Almighty, TargetType::OneAlly, 40, 5, 0, 1.0f, true),
-        Make("Minuet", Element::Almighty, TargetType::AllAllies, 25, 10, 0, 1.0f, true),
+        Describe(Attack(Element::Strike, 8), "A swing of Saria's staff."),
+        Describe(Make("Gale", Element::Wind, TargetType::OneEnemy, 14, 4), "A blade of wind strikes one foe."),
+        Describe(Make("Forest Gust", Element::Wind, TargetType::AllEnemies, 9, 8),
+                 "A forest wind that sweeps over every foe."),
+        Describe(Make("Song of Healing", Element::Almighty, TargetType::OneAlly, 40, 5, 0, 1.0f, true),
+                 "A gentle tune that restores one ally's HP."),
+        Describe(Make("Minuet", Element::Almighty, TargetType::AllAllies, 25, 10, 0, 1.0f, true),
+                 "The Minuet of Forest restores the whole party's HP."),
     };
     GrowTo(c, level);
     return c;
