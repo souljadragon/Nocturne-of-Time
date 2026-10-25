@@ -1,5 +1,6 @@
 // Nocturne of Time: keeps the mod's progress in the save file, in a "nocturne" section beside OoT's own data:
-// the party, gear and items, the moon (Save/NocturneSave), plus the bestiary and the explored maps.
+// the party, gear and items, the moon (Save/NocturneSave), plus the bestiary, the explored maps and the boss gate
+// (battles won toward opening it, and whether Gohma is beaten).
 //
 // Loading order matters: the save file is read before the game announces the load (OnLoadGame), and the mod's
 // modules forget their state on that announcement. So the section is only remembered while reading; on
@@ -13,6 +14,7 @@
 
 #include "NocturneSave.h"
 #include "../Automap.h"
+#include "../Boss/BossGate.h"
 #include "../Party.h"
 #include "../Battle/BattleScene.h"
 #include "../Moon/Moon.h"
@@ -45,6 +47,7 @@ void SaveSection(const SaveContext&, int, bool) {
     }
     data["bestiary"] = bestiary;
     data["maps"] = Automap_Save();
+    data["gate"] = BossGate_Save();
     SaveManager::Instance->SaveData("data", data);
 }
 
@@ -52,6 +55,7 @@ void ApplyLoad() {
     // Forget everything from the last play session, then take what the file has
     Battle_ResetForLoad();
     Automap_Reset();
+    BossGate_Reset();
     MoonHud_ResetNotice();
     Party_Reset();
     Moon_Reset();
@@ -69,6 +73,9 @@ void ApplyLoad() {
     }
     if (data.contains("maps")) {
         Automap_Load(data["maps"]);
+    }
+    if (data.contains("gate")) {
+        BossGate_Load(data["gate"]);
     }
     sPending.reset();
 }

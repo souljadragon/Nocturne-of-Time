@@ -18,6 +18,7 @@
 #include "../Loot/Loot.h"
 #include "../Party.h"
 #include "../DungeonCrawler.h"
+#include "../Boss/BossGate.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -58,6 +59,10 @@ constexpr int kMaxDrops = 2;         // per battle
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
+constexpr f32 kBossDistance = 300.0f;    // Queen Gohma stands further back: she's big
+constexpr f32 kBossMinDistance = 190.0f;
+constexpr int kBossStartFrames = 25;     // after landing in the chamber
+constexpr int kHeartContainerHp = 8;     // max HP for everyone when a boss falls
 
 enum class Ui { None, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
 
@@ -103,12 +108,21 @@ struct Scene {
     bool autoBattle = false; // until B is pressed or the battle ends
     int itemCursor = 0;      // index into OwnedItems()
     ConsumableId pendingItem = ConsumableId::RedPotion;
+
+    bool boss = false; // a boss fight: time limit, no running, its own rewards and ending
+    // Where the enemies stand (for enemies that join mid-battle)
+    Vec3f origin = { 0.0f, 0.0f, 0.0f };
+    Vec3f fwd = { 0.0f, 0.0f, 1.0f };
+    Vec3f right = { 1.0f, 0.0f, 0.0f };
+    f32 dist = 0.0f;
 };
 
 Scene sScene;
 std::set<int> sAnalyzedKinds; // bestiary: enemy kinds whose affinities are known
 int sDanger = 0;
 s16 sLastScene = -1;
+int sBossCountdown = 0; // frames on the chamber floor before the boss appears
+bool sBossDone = false; // this visit's boss fight is over (the warp out is under way)
 
 void EnsureParty() {
     Party_EnsureCreated(kStartLevel);
@@ -160,13 +174,14 @@ std::vector<EnemyKind> RollEncounter() {
     int count = Moon_EnemyCount(Rand_ZeroOne()); // fuller moon, bigger packs
     std::vector<EnemyKind> kinds;
     for (int i = 0; i < count; i++) {
-        kinds.push_back((EnemyKind)(int)(Rand_ZeroOne() * (f32)EnemyKind::Count * 0.9999f));
+        kinds.push_back((EnemyKind)(int)(Rand_ZeroOne() * (f32)kRandomEnemyKinds * 0.9999f));
     }
     return kinds;
 }
 
-void StartBattle(PlayState* play, Player* player) {
+void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies, bool boss) {
     EnsureParty();
+    sScene.boss = boss;
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
 
@@ -195,12 +210,6 @@ void StartBattle(PlayState* play, Player* player) {
     }
     DungeonCrawler_SetFacing(bestFacing);
 
-    std::vector<EnemyKind> kinds = RollEncounter();
-    std::vector<Combatant> enemies;
-    for (EnemyKind k : kinds) {
-        enemies.push_back(MakeEnemy(k));
-    }
-
     // Labels: "Deku Baba A", "Deku Baba B" when a kind repeats
     sScene.enemyLabels.clear();
     for (size_t i = 0; i < enemies.size(); i++) {
@@ -225,7 +234,8 @@ void StartBattle(PlayState* play, Player* player) {
     s16 yaw = (s16)(bestFacing * 0x4000);
     Vec3f fwd = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
     Vec3f right = { -Math_CosS(yaw), 0.0f, Math_SinS(yaw) };
-    f32 dist = CLAMP(bestDist - 40.0f, kEnemyMinDistance, kEnemyDistance);
+    f32 dist = boss ? CLAMP(bestDist - 110.0f, kBossMinDistance, kBossDistance)
+                    : CLAMP(bestDist - 40.0f, kEnemyMinDistance, kEnemyDistance);
     // Space enemies by their size so wide ones (Skulltulas) don't overlap
     auto widthOf = [](int kind) -> f32 {
         switch ((EnemyKind)kind) {
@@ -233,6 +243,8 @@ void StartBattle(PlayState* play, Player* player) {
                 return 80.0f;
             case EnemyKind::FireKeese:
                 return 46.0f;
+            case EnemyKind::QueenGohma:
+                return 240.0f;
             default:
                 return 42.0f;
         }
@@ -244,6 +256,10 @@ void StartBattle(PlayState* play, Player* player) {
     // The row is always centred straight ahead of the camera (as in the Famicom games). Where walls are
     // close it is squeezed together, never shifted sideways: the narrower side decides how far it can spread.
     const Vec3f& origin = player->actor.world.pos;
+    sScene.origin = origin;
+    sScene.fwd = fwd;
+    sScene.right = right;
+    sScene.dist = dist;
     Vec3f centre = { origin.x + fwd.x * dist, origin.y, origin.z + fwd.z * dist };
     const f32 kWallMargin = 24.0f;
     f32 freeRight = std::max(0.0f, FreeDistance(play, centre, (s16)(yaw - 0x4000), 220.0f) - kWallMargin);
@@ -257,7 +273,7 @@ void StartBattle(PlayState* play, Player* player) {
     }
     // Still too wide (a Skulltula in a narrow corridor): shrink them a little so they don't clip the walls
     f32 sizeScale = 1.0f;
-    if (rowWidth * squeeze > room && rowWidth > 0.0f) {
+    if (!boss && rowWidth * squeeze > room && rowWidth > 0.0f) {
         sizeScale = std::max(0.6f, room / (rowWidth * squeeze));
         squeeze *= sizeScale;
     }
@@ -318,6 +334,10 @@ void StartBattle(PlayState* play, Player* player) {
         }
     }
     sScene.battle = std::make_unique<Battle>(party, enemies, [] { return Rand_ZeroOne() * 0.99999f; });
+    if (boss) {
+        sScene.battle->SetTurnLimit(kGohmaTurnLimit);
+        sScene.battle->SetNoEscape(true);
+    }
     sScene.queue.clear();
     sScene.rewardsGiven = false;
     sScene.defeat = false;
@@ -326,12 +346,66 @@ void StartBattle(PlayState* play, Player* player) {
     sScene.timer = 0;
     sScene.message = enemies.size() == 1 ? "A " + enemies[0].name + " appears!" : "Enemies appear!";
     sScene.messageColor = 0;
-    if (Moon_BlocksEscape()) {
+    if (boss) {
+        sScene.message = "Queen Gohma, Parasitic Armored Arachnid!\nDefeat her in " +
+                         std::to_string(kGohmaTurnLimit) + " turns!";
+        sScene.messageColor = 0xF8380000u;
+        Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS);
+    } else if (Moon_BlocksEscape()) {
         sScene.message += "\nThe full moon has driven them mad!";
         sScene.messageColor = 0xC8A0FF00u; // violet
     }
     sScene.showingMessage = true;
     PlaySfx(NA_SE_SY_FSEL_DECIDE_L);
+}
+
+void StartRandomBattle(PlayState* play, Player* player) {
+    std::vector<Combatant> enemies;
+    for (EnemyKind k : RollEncounter()) {
+        enemies.push_back(MakeEnemy(k));
+    }
+    StartBattle(play, player, enemies, false);
+}
+
+void StartBossBattle(PlayState* play, Player* player) {
+    // Two larvae, three under a gibbous or full moon
+    int larvae = Moon_Phase() >= MoonPhase::SixEighths ? 3 : 2;
+    StartBattle(play, player, { MakeQueenGohma(larvae) }, true);
+}
+
+// A larva hatches beside the queen, a little closer to the party
+void SpawnJoiningEnemy(PlayState* play, int index) {
+    if (play == NULL || !sScene.battle || index < 0 || index >= (int)sScene.battle->Enemies().size()) {
+        return;
+    }
+    const Combatant& c = sScene.battle->Enemies()[index];
+    int k = index - 1; // the queen is enemy 0
+    static const f32 kLateral[] = { -95.0f, 95.0f, 0.0f, -170.0f, 170.0f };
+    static const f32 kCloser[] = { 70.0f, 70.0f, 110.0f, 40.0f, 40.0f };
+    int slot = std::clamp(k, 0, 4);
+    f32 d = std::max(60.0f, sScene.dist - kCloser[slot]);
+    Vec3f pos = { sScene.origin.x + sScene.fwd.x * d + sScene.right.x * kLateral[slot], sScene.origin.y,
+                  sScene.origin.z + sScene.fwd.z * d + sScene.right.z * kLateral[slot] };
+    Vec3f probe = { pos.x, pos.y + 50.0f, pos.z };
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+    if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY < pos.y - 80.0f) {
+        floorY = pos.y;
+    }
+    s16 face = Math_Atan2S(sScene.origin.z - pos.z, sScene.origin.x - pos.x);
+    while ((int)sScene.enemyActors.size() < index) {
+        sScene.enemyActors.push_back(NULL);
+    }
+    Actor* a = BattleEnemyActor_Spawn(play, c.kind, pos.x, floorY, pos.z, face);
+    if ((int)sScene.enemyActors.size() == index) {
+        sScene.enemyActors.push_back(a);
+    } else {
+        sScene.enemyActors[index] = a;
+    }
+    while ((int)sScene.enemyLabels.size() <= index) {
+        sScene.enemyLabels.push_back(c.name);
+    }
 }
 
 void KillEnemyActors() {
@@ -370,7 +444,17 @@ void EndBattle() {
     sScene.ui = Ui::None;
     sScene.queue.clear();
     sScene.showingMessage = false;
+    sScene.boss = false;
     sDanger = 0;
+}
+
+BattleEvent HeldMessage(const std::string& text, uint32_t color) {
+    BattleEvent e;
+    e.type = BattleEvent::Type::Message;
+    e.text = text;
+    e.hold = true;
+    e.color = color;
+    return e;
 }
 
 void QueueRewards() {
@@ -440,7 +524,22 @@ void QueueRewards() {
         itemLevel = std::max(itemLevel, e.level);
     }
     LootRng rng = [] { return Rand_ZeroOne() * 0.99999f; };
-    for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops; i++) {
+    auto addFound = [&](const Item& item) {
+        Party_Bag().push_back(item);
+        Rgb c = RarityColor(item.rarity);
+        sScene.queue.push_back(HeldMessage("Found " + item.name + "!",
+                                           ((uint32_t)c.r << 24) | ((uint32_t)c.g << 16) | ((uint32_t)c.b << 8)));
+    };
+    if (sScene.boss) {
+        // A boss always leaves something special (Rare or better), and maybe a second piece
+        addFound(RollItem(itemLevel, DropSource::Boss, Moon_LootLuck(), rng));
+        drops++;
+        if (Rand_ZeroOne() < 0.5f * Moon_DropScale()) {
+            addFound(RollItem(itemLevel, DropSource::Elite, Moon_LootLuck(), rng));
+            drops++;
+        }
+    }
+    for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops && !sScene.boss; i++) {
         if (Rand_ZeroOne() < kDropChance * Moon_DropScale()) {
             Item item = RollItem(itemLevel, DropSource::Common, Moon_LootLuck(), rng); // only common enemies so far
             Party_Bag().push_back(item);
@@ -471,6 +570,27 @@ void QueueRewards() {
         }
     }
 
+    if (sScene.boss) {
+        // Heart Container: everyone's max HP grows for good, and they're healed
+        for (PartyMember& m : members) {
+            m.base.maxHp += kHeartContainerHp;
+            m.base.hp = m.base.maxHp + 999; // clamped to the max with gear below
+            Party_ClampToMax(m);
+        }
+        sScene.queue.push_back(HeldMessage("Got a Heart Container!\nMax HP +" + std::to_string(kHeartContainerHp) +
+                                               " for everyone.",
+                                           0xF8380000u));
+        sScene.queue.push_back(HeldMessage("The Deku Tree is cleansed!", 0x58D85400u));
+        BossGate_SetCleared();
+        Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS_CLEAR);
+    } else {
+        // Battles in the dungeon wear down the seal on its boss gate
+        std::string gate = BossGate_OnVictory(gPlayState);
+        if (!gate.empty()) {
+            sScene.queue.push_back(HeldMessage(gate, BossGate_IsOpen() ? 0x3CBCFC00u : 0xC8A0FF00u));
+        }
+    }
+
     // Keep the engine's copy in step so EndBattle doesn't undo the level-up HP
     for (size_t i = 0; i < members.size() && i < after.size(); i++) {
         b.PartyMutable()[i].hp = members[i].base.hp;
@@ -498,10 +618,36 @@ void PlayEventEffects(const BattleEvent& e) {
         return (i >= 0 && i < (int)sScene.enemyActors.size()) ? sScene.enemyActors[i] : NULL;
     };
     switch (e.type) {
+        case BattleEvent::Type::Message:
+            // An enemy announcing its move lunges (bosses and larvae have attack animations)
+            if (e.actorIsEnemy && e.actor >= 0 && e.target < 0) {
+                if (Actor* a = enemyActor(e.actor)) {
+                    BattleEnemyActor_Animate(a, BattleAnim::Attack);
+                }
+            }
+            break;
+        case BattleEvent::Type::Summon:
+            if (Actor* a = enemyActor(e.actor)) {
+                BattleEnemyActor_Animate(a, BattleAnim::Special); // Gohma lays her eggs
+            }
+            SpawnJoiningEnemy(gPlayState, e.target);
+            PlaySfx(NA_SE_EN_GOMA_BJR_EGG2);
+            break;
+        case BattleEvent::Type::Warning:
+            if (gPlayState != NULL) {
+                s16 quake = Quake_Add(Play_GetCamera(gPlayState, CAM_ID_MAIN), 3);
+                Quake_SetSpeed(quake, 12000);
+                Quake_SetQuakeValues(quake, 3, 0, 0, 0);
+                Quake_SetCountdown(quake, 30);
+            }
+            Rumble_Request(0.0f, 180, 30, 100);
+            PlaySfx(NA_SE_EV_STONE_BOUND);
+            break;
         case BattleEvent::Type::Hit:
             if (e.targetIsEnemy) {
                 if (Actor* a = enemyActor(e.target)) {
                     Actor_SetColorFilter(a, 0x4000, 255, 0, 8);
+                    BattleEnemyActor_Animate(a, BattleAnim::Hurt);
                 }
                 PlaySfx(NA_SE_IT_SWORD_IMPACT);
             } else {
@@ -818,6 +964,11 @@ void HandleInput(const Buttons& in) {
                         BattleEnemyActor_SetFast(true);
                         break;
                     case CMD_RUN:
+                        if (b.NoEscape()) {
+                            PlaySfx(NA_SE_SY_ERROR);
+                            Queue(b.Run()); // "There's no escape!" (costs no turn)
+                            break;
+                        }
                         if (Moon_BlocksEscape()) {
                             // Frenzied by the full moon, the monsters won't let the party go (costs no turn)
                             PlaySfx(NA_SE_SY_ERROR);
@@ -974,12 +1125,23 @@ void RegisterBattleScene() {
         }
     });
 
+    // Queen Gohma's chamber: the crawler's battle replaces her vanilla fight
+    COND_HOOK(ShouldActorInit, enabled, [](void* refActor, bool* result) {
+        Actor* actor = (Actor*)refActor;
+        if (actor->id == ACTOR_BOSS_GOMA && gPlayState != NULL && BossGate_InBossRoom(gPlayState)) {
+            *result = false;
+        }
+    });
+
     COND_HOOK(OnSceneInit, enabled, [](int16_t sceneNum) {
         // Actors from the old scene are gone; drop the battle without touching them
         sScene.enemyActors.clear();
         sScene.battle.reset();
         sScene.ui = Ui::None;
         sScene.queue.clear();
+        sScene.boss = false;
+        sBossCountdown = 0;
+        sBossDone = false;
         sDanger = 0;
         // Coming into a new area patches the party up (Sheikah Stones and inns come later)
         if (sceneNum != sLastScene) {
@@ -1019,15 +1181,29 @@ void Battle_Abort() {
 }
 
 void Battle_OnStep(PlayState* play, Player* player) {
-    if (Battle_IsActive()) {
-        return;
+    if (Battle_IsActive() || BossGate_InBossRoom(play) || play->transitionTrigger != TRANS_TRIGGER_OFF) {
+        return; // no random encounters in a boss's chamber, or while a warp is fading out
     }
     MoonHud_OnStep();
     // The fuller the moon, the faster danger builds
     int gain = kDangerStepMin + (int)(Rand_ZeroOne() * (kDangerStepMax - kDangerStepMin + 1) * 0.9999f);
     sDanger += (int)(gain * Moon_EncounterScale() + 0.5f);
     if (sDanger >= kDangerTrigger) {
-        StartBattle(play, player);
+        StartRandomBattle(play, player);
+    }
+}
+
+void Battle_FieldTick(PlayState* play, Player* player) {
+    if (!BossGate_InBossRoom(play) || Battle_IsActive() || sBossDone || BossGate_IsCleared() ||
+        play->transitionTrigger != TRANS_TRIGGER_OFF) {
+        return;
+    }
+    // Once Link has landed in the chamber and had a moment to look around, she comes for him
+    if (!(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) {
+        return;
+    }
+    if (++sBossCountdown >= kBossStartFrames) {
+        StartBossBattle(play, player);
     }
 }
 
@@ -1077,6 +1253,14 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
             break;
 
         case Ui::Ending:
+            if (sScene.boss) {
+                // Win or lose, the boss fight ends with a warp back up to the dungeon entrance (losing is no game
+                // over: the party is patched up there and can take the gate again)
+                sBossDone = true;
+                EndBattle();
+                BossGate_ReturnToDungeon(play);
+                break;
+            }
             if (sScene.defeat) {
                 // Link has fallen: hand over to the game's own death and game over
                 gSaveContext.health = 0;
@@ -1132,6 +1316,9 @@ void Condition(const Combatant& c, std::string& text, Retro::Color& color) {
     if (!c.Alive()) {
         text = "DOWN";
         color = Retro::Red;
+    } else if (c.skipTurn || c.stunTurns > 0) {
+        text = "STN";
+        color = Retro::Yellow;
     } else if (c.ailment == Ailment::Poison) {
         text = "PSN";
         color = Retro::Violet;
@@ -1243,8 +1430,19 @@ void Battle_DrawUi(PlayState* play) {
     p.Text(10 + icons.Total() * 13 + 4, iconY + 2, partyTurn ? "PRESS TURN" : "ENEMY TURN", White);
     const int moonW = MoonHud_BoxWidth(16);
     MoonHud_DrawBox(p, SCREEN_WIDTH - 6 - moonW, 2, 16);
+    int rightEdge = SCREEN_WIDTH - 6 - moonW - 6;
+    if (b.HasTurnLimit()) {
+        // Turns left to win: red and flashing once the ceiling starts to tremble
+        int left = std::max(0, b.TurnsLeft());
+        bool urgent = left <= Battle::kTimeWarning;
+        std::string t = "TIME " + std::to_string(left);
+        if (!urgent || blinkOn) {
+            p.TextRight(rightEdge, iconY + 2, t, urgent ? Red : Cream);
+        }
+        rightEdge -= (int)Length(t) * kCharW + 8;
+    }
     if (sScene.autoBattle) {
-        p.TextRight(SCREEN_WIDTH - 6 - moonW - 6, iconY + 2, "AUTO B:STOP", Green);
+        p.TextRight(rightEdge, iconY + 2, b.HasTurnLimit() ? "AUTO" : "AUTO B:STOP", Green);
     }
 
     // ---- Message window (always there, like the Famicom's; empty between messages)
@@ -1264,7 +1462,8 @@ void Battle_DrawUi(PlayState* play) {
     p.Window(cmdX, cmdY, cmdW, cmdH);
     for (int i = 0; i < CMD_COUNT; i++) {
         bool sel = commandUi && sScene.ui == Ui::Command && i == sScene.commandCursor;
-        bool enabled = commandUi && !(i == CMD_RUN && Moon_BlocksEscape()); // no running at Full Moon
+        // no running at Full Moon or from a boss
+        bool enabled = commandUi && !(i == CMD_RUN && (Moon_BlocksEscape() || b.NoEscape()));
         int x = cmdX + 4 + (i / 4) * 70, y = cmdY + 6 + (i % 4) * kLineH;
         if (sel) {
             p.Text(x, y, "▶", Yellow);

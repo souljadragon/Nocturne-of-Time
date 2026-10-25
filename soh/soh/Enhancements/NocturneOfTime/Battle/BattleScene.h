@@ -17,6 +17,9 @@ void Battle_ResetForLoad();
 std::set<int>& Battle_Bestiary();
 #endif
 
+// Every frame the crawler walks (no battle): boss chambers start their fight once Link has landed.
+void Battle_FieldTick(PlayState* play, Player* player);
+
 // The crawler finished a step: fill the danger meter and maybe start a battle.
 void Battle_OnStep(PlayState* play, Player* player);
 

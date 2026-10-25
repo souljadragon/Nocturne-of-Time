@@ -424,7 +424,7 @@ static void TestRandomBattlesFinish() {
         std::vector<Combatant> enemies;
         int n = 1 + round % 3;
         for (int i = 0; i < n; i++) {
-            enemies.push_back(MakeEnemy((EnemyKind)((round + i) % (int)EnemyKind::Count)));
+            enemies.push_back(MakeEnemy((EnemyKind)((round + i) % kRandomEnemyKinds)));
         }
         Battle b({ MakeLink(5), MakeSaria(5) }, enemies, [&] { return dist(gen); });
         int steps = 0;
@@ -462,6 +462,241 @@ static void TestRandomBattlesFinish() {
     CHECK(outcomes[(int)BattlePhase::Victory] > 0);
 }
 
+static void TestBossPressTurns() {
+    std::printf("Boss: two icons a turn\n");
+    Battle b({ MakeLink(8), MakeSaria(8) }, { MakeQueenGohma(2) }, Steady());
+    b.Guard();
+    b.Guard();
+    CHECK(b.Phase() == BattlePhase::EnemyTurn);
+    CHECK(b.Icons().Total() == 2);
+    b.EnemyAct();
+    CHECK(b.Phase() == BattlePhase::EnemyTurn); // she acts again
+    b.EnemyAct();
+    CHECK(b.Phase() == BattlePhase::PartyCommand);
+
+    // Her eye: the slingshot (Pierce) hits a weakness for an extra half turn
+    Battle c({ MakeLink(8), MakeSaria(8) }, { MakeQueenGohma(2) }, Steady());
+    Events ev = c.UseSkill(2, 0);
+    CHECK(HasEvent(ev, BattleEvent::Type::Weak));
+    CHECK(c.Icons().solid == 1 && c.Icons().blinking == 1);
+}
+
+static void TestStun() {
+    std::printf("Stun skips the victim's next turn\n");
+    // Saria is stunned before her turn: the party gets one icon, and only Link acts
+    Combatant saria = MakeSaria(8);
+    saria.stunTurns = 1;
+    Battle b({ MakeLink(8), saria }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(b.Icons().Total() == 1);
+    CHECK(b.ActivePartyMember() == 0);
+    CHECK(b.Party()[1].skipTurn && b.Party()[1].stunTurns == 0);
+    b.Guard();
+    CHECK(b.Phase() == BattlePhase::EnemyTurn);
+    b.EnemyAct();
+    CHECK(b.Phase() == BattlePhase::PartyCommand);
+    CHECK(b.Icons().Total() == 2 && !b.Party()[1].skipTurn); // back the next turn
+
+    // Stunning Gaze: always hits with this rng, and 0.5 rolls are within the stun chance only if we push it up
+    ScriptedRng rng;
+    rng.fallback = 0.1f; // hits, low variance, stuns
+    Combatant gohma = MakeQueenGohma(0);
+    gohma.skills = { gohma.skills[2] }; // only the gaze
+    Battle g({ MakeLink(8), MakeSaria(8) }, { gohma }, [&] { return rng(); });
+    g.Guard();
+    g.Guard();
+    Events ev = g.EnemyAct();
+    bool stunned = false;
+    for (const BattleEvent& e : ev) {
+        stunned |= e.text.find("is stunned!") != std::string::npos;
+    }
+    CHECK(stunned);
+    int stunnedCount = 0;
+    for (const Combatant& c : g.Party()) {
+        stunnedCount += c.stunTurns;
+    }
+    CHECK(stunnedCount >= 1);
+
+    // A whole party stunned: the turn goes straight to the enemies
+    Combatant l = MakeLink(8), s = MakeSaria(8);
+    l.stunTurns = 1;
+    s.stunTurns = 1;
+    Battle all({ l, s }, { MakeEnemy(EnemyKind::DekuBaba) }, Steady());
+    CHECK(all.Phase() == BattlePhase::EnemyTurn);
+    all.EnemyAct();
+    CHECK(all.Phase() == BattlePhase::PartyCommand && all.Icons().Total() == 2);
+}
+
+static void TestSummonAtHalf() {
+    std::printf("Gohma lays eggs below half HP\n");
+    Combatant gohma = MakeQueenGohma(3);
+    gohma.hp = gohma.maxHp / 2 + 5;
+    Battle b({ MakeLink(8), MakeSaria(8) }, { gohma }, Steady());
+    CHECK(b.Enemies().size() == 1);
+    Events ev = b.UseSkill(0, 0);
+    CHECK(HasEvent(ev, BattleEvent::Type::Summon));
+    CHECK(b.Enemies().size() == 4);
+    CHECK(b.Enemies()[1].name == "Gohma Larva A" && b.Enemies()[3].name == "Gohma Larva C");
+    // only once
+    b.Pass();
+    while (b.Phase() == BattlePhase::EnemyTurn) {
+        b.EnemyAct();
+    }
+    CHECK(b.Enemies().size() == 4);
+    // the enemy turn now has her two icons plus one per larva
+    b.Guard();
+    b.Guard();
+    if (b.Phase() == BattlePhase::EnemyTurn) {
+        int alive = 0;
+        for (size_t i = 1; i < b.Enemies().size(); i++) {
+            alive += b.Enemies()[i].Alive() ? 1 : 0;
+        }
+        CHECK(b.Icons().Total() == 2 + alive);
+    }
+}
+
+static void TestTimeLimit() {
+    std::printf("Time limit\n");
+    Combatant tough = MakeEnemy(EnemyKind::Skulltula);
+    tough.maxHp = tough.hp = 99999;
+    tough.skills = { tough.skills[0] };
+    tough.skills[0].power = 0;
+    tough.st = 0;
+    Battle b({ MakeLink(8), MakeSaria(8) }, { tough }, Steady());
+    b.SetTurnLimit(3);
+    CHECK(b.TurnsLeft() == 3);
+    int turns = 0;
+    while (b.Phase() == BattlePhase::PartyCommand || b.Phase() == BattlePhase::EnemyTurn) {
+        if (b.Phase() == BattlePhase::EnemyTurn) {
+            b.EnemyAct();
+        } else {
+            b.Guard();
+            if (b.Phase() == BattlePhase::EnemyTurn) {
+                turns++;
+            }
+        }
+        if (turns > 10) {
+            break;
+        }
+    }
+    CHECK(turns == 3);
+    CHECK(b.Phase() == BattlePhase::Defeat && b.TimedOut());
+    CHECK(b.Party()[0].Alive()); // not by damage
+
+    // The warning, and larvae buying time back
+    Battle w({ MakeLink(20), MakeSaria(20) }, { MakeEnemy(EnemyKind::GohmaLarva), tough }, Steady());
+    w.SetTurnLimit(6);
+    w.Guard();
+    w.Guard(); // turn 1 over
+    while (w.Phase() == BattlePhase::EnemyTurn) {
+        w.EnemyAct();
+    }
+    CHECK(w.TurnsLeft() == 5);
+    Events ev = w.UseSkill(0, 0); // Link's sword (Slash) on the larva: weak, defeated
+    CHECK(!w.Enemies()[0].Alive());
+    CHECK(w.TurnsLeft() == 6);
+    bool bonus = false;
+    for (const BattleEvent& e : ev) {
+        bonus |= e.text == "Time +1!";
+    }
+    CHECK(bonus);
+
+    Battle x({ MakeLink(8), MakeSaria(8) }, { tough }, Steady());
+    x.SetTurnLimit(Battle::kTimeWarning + 1);
+    x.Guard();
+    x.Guard();
+    Events all;
+    while (x.Phase() == BattlePhase::EnemyTurn) {
+        Events e = x.EnemyAct();
+        all.insert(all.end(), e.begin(), e.end());
+    }
+    CHECK(HasEvent(all, BattleEvent::Type::Warning));
+}
+
+static void TestNoEscape() {
+    std::printf("No running from bosses\n");
+    Battle b({ MakeLink(8), MakeSaria(8) }, { MakeQueenGohma(2) }, [] { return 0.0f; });
+    b.SetNoEscape(true);
+    Events ev = b.Run();
+    CHECK(b.Phase() == BattlePhase::PartyCommand && b.Icons().Total() == 2);
+    CHECK(!ev.empty() && ev[0].text == "There's no escape!");
+}
+
+// A sensible player against Gohma at the level the gate is likely reached (8 battles from level 5)
+static void TestGohmaBalance() {
+    std::printf("Gohma balance (simulated)\n");
+    std::mt19937 gen(99);
+    std::uniform_real_distribution<float> dist(0.0f, 0.99999f);
+    for (int level : { 7, 8, 9 }) {
+        int wins = 0, timeouts = 0, totalTurns = 0;
+        const int kRounds = 400;
+        for (int round = 0; round < kRounds; round++) {
+            Combatant link = MakeLink(level), saria = MakeSaria(level);
+            link.weaponPower = 6; // a Hylian Blade or so
+            link.maxHp += 6;
+            link.hp = link.maxHp;
+            Battle b({ link, saria }, { MakeQueenGohma(2) }, [&] { return dist(gen); });
+            b.SetTurnLimit(kGohmaTurnLimit);
+            b.SetNoEscape(true);
+            int turns = 0;
+            bool wasParty = true;
+            while ((b.Phase() == BattlePhase::PartyCommand || b.Phase() == BattlePhase::EnemyTurn) && turns < 200) {
+                if (b.Phase() == BattlePhase::EnemyTurn) {
+                    if (wasParty) {
+                        turns++;
+                    }
+                    wasParty = false;
+                    b.EnemyAct();
+                    continue;
+                }
+                wasParty = true;
+                int who = b.ActivePartyMember();
+                const std::vector<Combatant>& e = b.Enemies();
+                int larvae = 0;
+                for (size_t i = 1; i < e.size(); i++) {
+                    larvae += e[i].Alive() ? 1 : 0;
+                }
+                if (who == 1) {
+                    // Saria: heal anyone below 45%, else wind
+                    int hurt = -1;
+                    for (int i = 0; i < 2; i++) {
+                        if (b.Party()[i].Alive() && b.Party()[i].hp * 100 < b.Party()[i].maxHp * 45) {
+                            hurt = i;
+                        }
+                    }
+                    if (hurt >= 0 && b.CanUseSkill(3)) {
+                        b.UseSkill(3, hurt);
+                    } else if (larvae >= 2 && b.CanUseSkill(2)) {
+                        b.UseSkill(2, -1);
+                    } else if (b.CanUseSkill(1)) {
+                        b.UseSkill(1, 0);
+                    } else {
+                        b.UseSkill(0, 0);
+                    }
+                } else {
+                    if (larvae >= 2 && b.CanUseSkill(1)) {
+                        b.UseSkill(1, -1); // Spin Attack
+                    } else {
+                        b.UseSkill(2, e[0].Alive() ? 0 : 1); // slingshot at the eye
+                    }
+                }
+            }
+            if (b.Phase() == BattlePhase::Victory) {
+                wins++;
+                totalTurns += turns + 1;
+            }
+            timeouts += b.TimedOut() ? 1 : 0;
+        }
+        std::printf("  level %d: %d%% wins, %d%% timeouts, %.1f turns per win\n", level, wins * 100 / kRounds,
+                    timeouts * 100 / kRounds, wins ? (float)totalTurns / wins : 0.0f);
+        if (level == 9) {
+            CHECK(wins > kRounds / 2); // beatable when prepared
+        }
+        if (level == 7) {
+            CHECK(wins < kRounds); // but not a pushover
+        }
+    }
+}
+
 int main() {
     TestPressTurnIcons();
     TestStartOfBattle();
@@ -480,6 +715,12 @@ int main() {
     TestAilments();
     TestItems();
     TestRandomBattlesFinish();
+    TestBossPressTurns();
+    TestStun();
+    TestSummonAtHalf();
+    TestTimeLimit();
+    TestNoEscape();
+    TestGohmaBalance();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;
 }

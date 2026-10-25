@@ -38,8 +38,9 @@ const char* AffinityName(Affinity a);
 enum class TargetType : uint8_t { OneEnemy, AllEnemies, OneAlly, AllAllies };
 
 // Status ailments. Poison lasts until cured (even after the battle); Burn wears off after a few turns and at the
-// end of the battle. Neither can take the last HP.
-enum class Ailment : uint8_t { None, Poison, Burn, Count };
+// end of the battle. Neither can take the last HP. Stun is different: a skill that inflicts it makes the victim
+// lose their next turn (Combatant::stunTurns); it never sits in the ailment slot and doesn't outlast the battle.
+enum class Ailment : uint8_t { None, Poison, Burn, Stun, Count };
 const char* AilmentName(Ailment a); // "Poison"
 const char* AilmentTag(Ailment a);  // "PSN", for the party panel
 constexpr int kBurnTurns = 3;
@@ -95,6 +96,17 @@ struct Combatant {
     bool guarding = false;
     Ailment ailment = Ailment::None;
     int ailmentTurns = 0; // turns left for ailments that wear off
+    int stunTurns = 0;      // own turns still to be lost to Stun
+    bool skipTurn = false;  // stunned: sits out the side's current turn
+
+    // Bosses
+    int pressTurns = 1;        // Press Turn icons this combatant brings to its side's turn
+    bool boss = false;
+    float summonAt = 0.0f;     // when HP first falls to this fraction of max, `summons` join the battle (0 = never)
+    bool summoned = false;
+    std::vector<Combatant> summons;
+    std::string summonText;    // shown when they arrive
+    int timeBonus = 0;         // turns added to the battle's time limit when this one is defeated
 
     bool Alive() const {
         return hp > 0;
@@ -142,6 +154,8 @@ struct BattleEvent {
         Analyze,  // target's affinities revealed
         TurnLost, // the side's remaining icons were lost
         PhaseChange,
+        Summon,   // `target` (an enemy index) joined the battle, called by `actor`
+        Warning,  // the time limit is running out
         Victory,
         Defeat,
         Escaped,
@@ -199,6 +213,26 @@ class Battle {
     Events Pass();
     Events Analyze(int enemy);
     Events Run();
+    // Bosses: running is impossible (Run then says so and costs nothing).
+    void SetNoEscape(bool noEscape) {
+        mNoEscape = noEscape;
+    }
+    bool NoEscape() const {
+        return mNoEscape;
+    }
+    // A time limit in party turns (0 = none). When the last one has passed without a victory the battle is
+    // lost (TimedOut). Defeating an enemy with a timeBonus adds turns.
+    void SetTurnLimit(int turns);
+    int TurnsLeft() const {
+        return mTurnsLeft; // including the current one, while it's the party's turn
+    }
+    bool HasTurnLimit() const {
+        return mTurnLimit > 0;
+    }
+    bool TimedOut() const {
+        return mTimedOut;
+    }
+    static constexpr int kTimeWarning = 5; // "The ceiling trembles!" with this many turns left
     // Use a consumable on party member `target` (ignored for AllAllies). The scene removes it from the bag when
     // this returns events. Uses one Press Turn icon.
     bool CanUseItem(const ItemEffect& effect, int target) const;
@@ -224,7 +258,12 @@ class Battle {
     void StartPartyTurn(Events& out);
     void StartEnemyTurn(Events& out);
     void TickAilments(std::vector<Combatant>& side, bool sideIsEnemy, Events& out);
-    bool AdvanceActive(); // next living party member; false if none
+    bool AdvanceActive(); // next living party member who can act; false if none
+    bool CanAct(const Combatant& c) const {
+        return c.Alive() && !c.skipTurn;
+    }
+    int CountIcons(std::vector<Combatant>& side, bool sideIsEnemy, Events& out); // also applies Stun
+    void CheckSummons(Events& out);
     bool CheckEnd(Events& out);
     int CountAlive(const std::vector<Combatant>& side) const;
 
@@ -236,6 +275,11 @@ class Battle {
     int mActive = 0;      // party member choosing a command
     int mEnemyCursor = 0; // next enemy to act
     int mRupees = -1;
+    bool mNoEscape = false;
+    int mTurnLimit = 0;
+    int mTurnsLeft = 0;
+    bool mTimedOut = false;
+    bool mInStart = false; // StartPartyTurn <-> StartEnemyTurn hand-off when a whole side is stunned
 };
 
 } // namespace Nocturne

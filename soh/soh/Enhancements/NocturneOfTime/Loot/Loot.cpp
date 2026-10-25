@@ -255,7 +255,8 @@ std::array<float, 4> RarityOdds(DropSource source, float luck) {
     std::array<float, 4> w;
     switch (source) {
         case DropSource::Boss:
-            w = { 0.0f, 40.0f - 10.0f * luck, 45.0f, 15.0f + 10.0f * luck };
+            // Always Rare or better; a fair chance at a Legendary
+            w = { 0.0f, 0.0f, 80.0f - 10.0f * luck, 20.0f + 10.0f * luck };
             break;
         case DropSource::Elite:
             w = { 40.0f - 15.0f * luck, 40.0f, 17.0f + 10.0f * luck, 3.0f + 5.0f * luck };

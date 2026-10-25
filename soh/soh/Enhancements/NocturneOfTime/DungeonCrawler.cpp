@@ -20,6 +20,7 @@
 #include "Automap.h"
 #include "Battle/BattleScene.h"
 #include "Loot/EquipMenu.h"
+#include "Boss/BossGate.h"
 
 #include <math.h>
 
@@ -108,8 +109,9 @@ f32 SmoothStep(f32 t) {
 }
 
 bool SceneAllowed(PlayState* play) {
-    // The vertical slice starts in the Deku Tree; more dungeons get added as they are remixed.
-    return play->sceneNum == SCENE_DEKU_TREE;
+    // The vertical slice starts in the Deku Tree (and Queen Gohma's chamber below it); more dungeons get
+    // added as they are remixed.
+    return play->sceneNum == SCENE_DEKU_TREE || play->sceneNum == SCENE_DEKU_TREE_BOSS;
 }
 
 bool PlayerBusy(Player* player) {
@@ -270,7 +272,8 @@ void UpdateAction(Player* player) {
                 sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
                 sCrawler.action = Action::None;
-                if (gPlayState != NULL) {
+                // Onto the boss gate: its prompt opens instead of an encounter roll
+                if (gPlayState != NULL && !BossGate_OnStep(gPlayState, player)) {
                     Battle_OnStep(gPlayState, player); // may start a battle
                 }
             }
@@ -363,19 +366,24 @@ bool OnFilterInput(Player* player, Input* input) {
         Activate(player);
     }
 
+    BossGate_Tick(play, player);
+
     // R opens the party / equipment menu (not during a battle)
-    if (!Battle_IsActive() && !EquipMenu_IsOpen() && (input->press.button & BTN_R) &&
+    if (!Battle_IsActive() && !EquipMenu_IsOpen() && !BossGate_PromptOpen() && (input->press.button & BTN_R) &&
         sCrawler.action == Action::None) {
         EquipMenu_Open();
         input->press.button &= ~BTN_R;
     }
 
-    if (Battle_IsActive() || EquipMenu_IsOpen()) {
-        // The battle or menu reads the controller; Link himself does nothing but finish turning to face the enemies
+    if (Battle_IsActive() || EquipMenu_IsOpen() || BossGate_PromptOpen()) {
+        // The battle, menu or gate prompt reads the controller; Link himself does nothing but finish turning to
+        // face the enemies
         if (Battle_IsActive()) {
             Battle_Update(play, player, input);
-        } else {
+        } else if (EquipMenu_IsOpen()) {
             EquipMenu_Update(input);
+        } else {
+            BossGate_Update(play, input);
         }
         ClearMovementInput(input);
         for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
@@ -403,6 +411,7 @@ bool OnFilterInput(Player* player, Input* input) {
         Automap_ToggleLarge();
     }
     Automap_Update(play, player);
+    Battle_FieldTick(play, player); // boss rooms start their fight
 
     // Look up/down with the right stick; springs back to level when released
     s16 targetPitch = (s16)CLAMP((s32)cur.right_stick_y * kMaxPitch / 80, -kMaxPitch, kMaxPitch);

@@ -14,6 +14,7 @@
 #include "UI/RetroUI.h"
 #include "DungeonCrawler.h"
 #include "Battle/BattleScene.h"
+#include "Boss/BossGate.h"
 #include "soh/frame_interpolation.h"
 
 #include <math.h>
@@ -179,6 +180,20 @@ void Automap_Draw(PlayState* play, int boxX, int boxY, int boxSize) {
                     }
                 }
             }
+        }
+    }
+
+    // The boss gate: a square in the middle of its tile (violet sealed, blinking blue open, green cleared)
+    float gx, gy, gz;
+    if (BossGate_Position(play, gx, gy, gz)) {
+        CellKey g = KeyFor({ gx, gy, gz });
+        bool blinkOff = BossGate_IsOpen() && !BossGate_IsCleared() && (play->gameplayFrames / 6) % 2 == 1;
+        if (g.floor == here.floor && abs(g.x - here.x) <= radius && abs(g.z - here.z) <= radius && !blinkOff) {
+            Retro::Color c = BossGate_IsCleared() ? Retro::Green : (BossGate_IsOpen() ? Retro::Blue : Retro::Violet);
+            s32 m = std::max(2, cellPx / 2);
+            s32 sx = x0 + (g.x - here.x + radius) * cellPx + (cellPx - m) / 2;
+            s32 sy = y0 + (g.z - here.z + radius) * cellPx + (cellPx - m) / 2;
+            rect(sx, sy, m, m, c);
         }
     }
 

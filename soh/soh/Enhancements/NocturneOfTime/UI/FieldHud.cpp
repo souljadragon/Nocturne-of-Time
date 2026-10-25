@@ -18,6 +18,7 @@
 #include "../Loot/EquipMenu.h"
 #include "../Moon/MoonHud.h"
 #include "../Moon/Moon.h"
+#include "../Boss/BossGate.h"
 
 #include <memory>
 #include <string>
@@ -54,6 +55,8 @@ const char* SceneTitle(PlayState* play) {
     switch (play->sceneNum) {
         case SCENE_DEKU_TREE:
             return "DEKU TREE";
+        case SCENE_DEKU_TREE_BOSS:
+            return "GOHMA'S LAIR";
         default:
             return "DUNGEON";
     }
@@ -94,6 +97,8 @@ static void DrawFieldHud(PlayState* play) {
             p.Text(66, 229, "FLOOR", White);
             p.Rect(120, 232, 7, 2, Blue);
             p.Text(130, 229, "DOOR", White);
+            p.Rect(176, 229, 7, 7, BossGate_IsCleared() ? Green : (BossGate_IsOpen() ? Blue : Violet));
+            p.Text(186, 229, "GATE", White);
             p.TextRight(SCREEN_WIDTH - 8, 229, "L:CLOSE", Grey);
             MoonHud_Tick();
         }
@@ -131,8 +136,11 @@ static void DrawFieldHud(PlayState* play) {
     // Message window: the Full Moon announcement, otherwise empty like a Famicom message window
     p.Window(6, kMessageY, SCREEN_WIDTH - 12, 28);
     p.Text(14, kMessageY + 6, "▶", Green);
-    if (const char* note = MoonHud_NoticeText()) {
-        p.Text(26, kMessageY + 6, note, Violet);
+    // The boss gate's prompt takes the window while it's up
+    if (!BossGate_DrawPrompt(p, 26, kMessageY + 6, SCREEN_WIDTH - 14 - 26)) {
+        if (const char* note = MoonHud_NoticeText()) {
+            p.Text(26, kMessageY + 6, note, Violet);
+        }
     }
 
     // Party cards: portrait, name and condition, HP, MP and level

@@ -20,3 +20,7 @@ void BattleEnemyActor_SetFast(bool fast);
 
 // Shrink (or grow) an enemy, e.g. to fit a narrow corridor. Deku Babas keep their size.
 void BattleEnemyActor_SetSize(Actor* actor, float factor);
+
+// One-off animations (Queen Gohma and her larvae have them; other enemies keep their idle).
+enum class BattleAnim { Attack, Hurt, Special };
+void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim);

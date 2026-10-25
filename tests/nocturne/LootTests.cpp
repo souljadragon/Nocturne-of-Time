@@ -67,6 +67,7 @@ static void TestRarityOdds() {
     // Elites and bosses can drop Legendaries; bosses never drop plain items
     CHECK(elite[Rarity::Legendary] > 0);
     CHECK(boss[Rarity::Common] == 0 && boss[Rarity::Legendary] > elite[Rarity::Legendary]);
+    CHECK(boss[Rarity::Uncommon] == 0 && boss[Rarity::Rare] > boss[Rarity::Legendary]); // purple or better
 
     std::array<float, 4> odds = RarityOdds(DropSource::Common, 0.0f);
     CHECK(odds[2] > 3.9f && odds[2] < 4.1f); // purple unchanged at 4%

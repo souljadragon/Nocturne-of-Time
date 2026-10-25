@@ -6,11 +6,21 @@
 
 namespace Nocturne {
 
-enum class EnemyKind : int { DekuBaba, Skulltula, FireKeese, Count };
+enum class EnemyKind : int { DekuBaba, Skulltula, FireKeese, QueenGohma, GohmaLarva, Count };
+// Random encounters come from the first few kinds; bosses and their minions only appear in their own fights.
+constexpr int kRandomEnemyKinds = 3;
 
 Combatant MakeLink(int level);
 Combatant MakeSaria(int level);
 Combatant MakeEnemy(EnemyKind kind);
+
+// Queen Gohma, boss of the Deku Tree. Two Press Turn icons a turn; her eye is weak to Pierce (the slingshot) and
+// Fire. Below half HP she lays eggs: `larvae` Gohma Larvae hatch (each one defeated gives back a turn of the
+// time limit).
+Combatant MakeQueenGohma(int larvae);
+// Turns to beat her in. A prepared party (level 8-9) usually wins in 9-10 turns, so this leaves room for
+// healing and items but punishes stalling; each larva defeated gives one back.
+constexpr int kGohmaTurnLimit = 15;
 
 // Total XP needed to reach `level` from level 1. The step to the next level grows with the square of the level
 // (a cubic total, like most SMT games), so early levels come quickly and later ones take real work.

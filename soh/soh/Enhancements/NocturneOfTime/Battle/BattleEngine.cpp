@@ -109,6 +109,8 @@ const char* AilmentName(Ailment a) {
             return "Poison";
         case Ailment::Burn:
             return "Burn";
+        case Ailment::Stun:
+            return "Stun";
         default:
             return "";
     }
@@ -120,6 +122,8 @@ const char* AilmentTag(Ailment a) {
             return "PSN";
         case Ailment::Burn:
             return "BRN";
+        case Ailment::Stun:
+            return "STN";
         default:
             return "";
     }
@@ -204,16 +208,70 @@ int Battle::CountAlive(const std::vector<Combatant>& side) const {
     return n;
 }
 
+void Battle::SetTurnLimit(int turns) {
+    mTurnLimit = std::max(0, turns);
+    mTurnsLeft = mTurnLimit;
+}
+
+int Battle::CountIcons(std::vector<Combatant>& side, bool sideIsEnemy, Events& out) {
+    int icons = 0;
+    for (int i = 0; i < (int)side.size(); i++) {
+        Combatant& c = side[i];
+        c.skipTurn = false;
+        if (!c.Alive()) {
+            continue;
+        }
+        if (c.stunTurns > 0) {
+            c.stunTurns--;
+            c.skipTurn = true;
+            BattleEvent e = Ev(BattleEvent::Type::Message, sideIsEnemy, i, sideIsEnemy, i, 0,
+                               c.name + " is stunned and can't move!");
+            e.color = 0xF8B80000u;
+            out.push_back(e);
+            continue;
+        }
+        icons += std::max(1, c.pressTurns);
+    }
+    // A whole side stunned twice over (only possible when both sides stun): the stun wears off early so the
+    // battle can't stall
+    if (icons == 0 && mInStart) {
+        for (Combatant& c : side) {
+            if (c.Alive()) {
+                c.skipTurn = false;
+                icons += std::max(1, c.pressTurns);
+            }
+        }
+    }
+    return icons;
+}
+
 void Battle::StartPartyTurn(Events& out) {
+    if (mTurnLimit > 0 && mTurnsLeft <= 0) {
+        mTimedOut = true;
+        mPhase = BattlePhase::Defeat;
+        out.push_back(Ev(BattleEvent::Type::Defeat, false, -1, false, -1, 0, "Time is up! The chamber caves in..."));
+        return;
+    }
     mPhase = BattlePhase::PartyCommand;
-    mIcons = { CountAlive(mParty), 0 };
     for (Combatant& c : mParty) {
         c.guarding = false;
     }
-    mActive = -1;
-    AdvanceActive();
     out.push_back(Ev(BattleEvent::Type::PhaseChange, false, -1, false, -1, 0, "Your turn"));
+    if (mTurnLimit > 0 && mTurnsLeft == kTimeWarning) {
+        BattleEvent w = Ev(BattleEvent::Type::Warning, false, -1, false, -1, mTurnsLeft,
+                           "The ceiling trembles! " + std::to_string(mTurnsLeft) + " turns left.");
+        w.color = 0xF8380000u;
+        out.push_back(w);
+    }
     TickAilments(mParty, false, out);
+    mIcons = { CountIcons(mParty, false, out), 0 };
+    mActive = -1;
+    if (!AdvanceActive() && CountAlive(mParty) > 0 && !mInStart) {
+        // Everyone is stunned: the turn passes straight to the enemies
+        mInStart = true;
+        StartEnemyTurn(out);
+        mInStart = false;
+    }
 }
 
 void Battle::TickAilments(std::vector<Combatant>& side, bool sideIsEnemy, Events& out) {
@@ -239,23 +297,32 @@ void Battle::TickAilments(std::vector<Combatant>& side, bool sideIsEnemy, Events
 
 void Battle::StartEnemyTurn(Events& out) {
     mPhase = BattlePhase::EnemyTurn;
-    mIcons = { CountAlive(mEnemies), 0 };
+    if (mTurnLimit > 0) {
+        mTurnsLeft--; // the party's turn is over
+    }
     for (Combatant& c : mEnemies) {
         c.guarding = false;
     }
-    mEnemyCursor = 0;
-    while (mEnemyCursor < (int)mEnemies.size() && !mEnemies[mEnemyCursor].Alive()) {
-        mEnemyCursor++;
-    }
     out.push_back(Ev(BattleEvent::Type::PhaseChange, true, -1, false, -1, 0, "Enemy turn"));
     TickAilments(mEnemies, true, out);
+    mIcons = { CountIcons(mEnemies, true, out), 0 };
+    mEnemyCursor = 0;
+    while (mEnemyCursor < (int)mEnemies.size() && !CanAct(mEnemies[mEnemyCursor])) {
+        mEnemyCursor++;
+    }
+    if (mIcons.Empty() && !mInStart) {
+        // Every enemy is stunned
+        mInStart = true;
+        StartPartyTurn(out);
+        mInStart = false;
+    }
 }
 
 bool Battle::AdvanceActive() {
     int n = (int)mParty.size();
     for (int step = 1; step <= n; step++) {
         int i = ((mActive < 0 ? -1 : mActive) + step) % n;
-        if (mParty[i].Alive()) {
+        if (CanAct(mParty[i])) {
             mActive = i;
             return true;
         }
@@ -295,7 +362,32 @@ void Battle::SpendIcons(Outcome outcome) {
     }
 }
 
+void Battle::CheckSummons(Events& out) {
+    size_t count = mEnemies.size(); // only those already here can call for help
+    for (size_t i = 0; i < count; i++) {
+        Combatant& e = mEnemies[i];
+        if (!e.Alive() || e.summoned || e.summonAt <= 0.0f || e.summons.empty() ||
+            (float)e.hp > (float)e.maxHp * e.summonAt) {
+            continue;
+        }
+        e.summoned = true;
+        std::vector<Combatant> arriving = e.summons; // copied: adding enemies moves `e`
+        if (!e.summonText.empty()) {
+            BattleEvent m = Ev(BattleEvent::Type::Message, true, (int)i, true, (int)i, 0, e.summonText);
+            m.color = 0xC8A0FF00u;
+            out.push_back(m);
+        }
+        for (Combatant& c : arriving) {
+            c.isEnemy = true;
+            mEnemies.push_back(c);
+            int index = (int)mEnemies.size() - 1;
+            out.push_back(Ev(BattleEvent::Type::Summon, true, (int)i, true, index, 0, c.name + " appears!"));
+        }
+    }
+}
+
 void Battle::AfterAction(Events& out) {
+    CheckSummons(out);
     if (CheckEnd(out)) {
         return;
     }
@@ -309,15 +401,22 @@ void Battle::AfterAction(Events& out) {
         return;
     }
     if (partyTurn) {
-        AdvanceActive();
+        if (!AdvanceActive()) {
+            StartEnemyTurn(out); // icons left but nobody able to use them
+        }
     } else {
         int n = (int)mEnemies.size();
+        bool found = false;
         for (int step = 1; step <= n; step++) {
             int i = (mEnemyCursor + step) % n;
-            if (mEnemies[i].Alive()) {
+            if (CanAct(mEnemies[i])) {
                 mEnemyCursor = i;
+                found = true;
                 break;
             }
+        }
+        if (!found) {
+            StartPartyTurn(out);
         }
     }
 }
@@ -421,6 +520,22 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     if (!def.Alive()) {
         out.push_back(Ev(BattleEvent::Type::Defeated, userIsEnemy, userIndex, targetIsEnemy, target, 0,
                          def.name + (targetIsEnemy ? " is defeated!" : " is down!")));
+        if (targetIsEnemy && def.timeBonus > 0 && mTurnLimit > 0) {
+            mTurnsLeft += def.timeBonus;
+            BattleEvent t = Ev(BattleEvent::Type::Message, userIsEnemy, userIndex, targetIsEnemy, target,
+                               def.timeBonus, "Time +" + std::to_string(def.timeBonus) + "!");
+            t.color = 0x3CBCFC00u;
+            out.push_back(t);
+        }
+    } else if (skill.inflict == Ailment::Stun) {
+        float chance = std::clamp(skill.inflictChance + (user.lu - def.lu) * 0.01f, 0.05f, 0.9f);
+        if (def.stunTurns == 0 && !def.skipTurn && mRand() < chance) {
+            def.stunTurns = 1;
+            BattleEvent e = Ev(BattleEvent::Type::Message, userIsEnemy, userIndex, targetIsEnemy, target, 0,
+                               def.name + " is stunned!");
+            e.color = 0xF8B80000u;
+            out.push_back(e);
+        }
     } else if (skill.inflict != Ailment::None && def.ailment == Ailment::None) {
         float chance = std::clamp(skill.inflictChance + (user.lu - def.lu) * 0.01f, 0.05f, 0.9f);
         if (mRand() < chance) {
@@ -587,6 +702,10 @@ Events Battle::Run() {
     if (mPhase != BattlePhase::PartyCommand) {
         return out;
     }
+    if (mNoEscape) {
+        out.push_back(Msg("There's no escape!")); // costs nothing
+        return out;
+    }
     float partyAg = 0, enemyAg = 0;
     int pn = 0, en = 0;
     for (const Combatant& c : mParty) {
@@ -634,7 +753,9 @@ Events Battle::EnemyAct() {
     enemy.mp -= s.mpCost;
     enemy.hp -= s.hpCost;
 
-    out.push_back(Msg(enemy.name + (si == 0 ? " attacks!" : " uses " + s.name + "!")));
+    // (the actor is set so the scene can animate the attacker; target -1 marks it as the announcement)
+    out.push_back(Ev(BattleEvent::Type::Message, true, ei, false, -1, 0,
+                     enemy.name + (si == 0 ? " attacks!" : " uses " + s.name + "!")));
 
     std::vector<int> targets;
     if (s.target == TargetType::AllEnemies) {

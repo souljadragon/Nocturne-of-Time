@@ -13,14 +13,21 @@ extern "C" {
 #include "objects/object_dekubaba/object_dekubaba.h"
 #include "objects/object_st/object_st.h"
 #include "objects/object_firefly/object_firefly.h"
+#include "objects/object_goma/object_goma.h"
+#include "objects/object_gol/object_gol.h"
 }
 
 #include <math.h>
 
 namespace {
 
-constexpr int kMaxLimbs = 30;
+constexpr int kMaxLimbs = 90; // Queen Gohma has 86
 constexpr s16 kDefeatFrames = 12;
+constexpr s16 kBossDefeatFrames = 40;
+constexpr int kGohmaLimbs = 86;  // BOSSGOMA_LIMB_MAX
+constexpr int kLarvaLimbs = 24;  // GOMA_LIMB_MAX
+constexpr s32 kGohmaLimbEye = 5; // BOSSGOMA_LIMB_EYE
+constexpr s32 kGohmaLimbIris = 39;
 
 // Deku Baba stem pose (fully grown, as in EnDekubaba_Grow), head to base
 constexpr s16 kBabaStemAngles[3] = { -0xAAA, -0x31C7, -0x5555 };
@@ -34,7 +41,19 @@ struct BattleEnemy {
     s16 defeatTimer; // counts down once defeated; 0 = alive or gone
     bool gone;       // defeated and faded out: drawn no more, removed when the battle ends
     f32 baseScale;
+    s16 defeatFrames;
+    AnimationHeader* idle; // looping idle; one-off animations (attacks, flinches) return to it
+    f32 idleSpeed;
+    bool playingOnce;
 };
+
+void PlayIdle(BattleEnemy* self, f32 morph) {
+    if (self->idle != NULL) {
+        Animation_Change(&self->skelAnime, self->idle, self->idleSpeed, 0.0f, Animation_GetLastFrame(self->idle),
+                         ANIMMODE_LOOP, morph);
+    }
+    self->playingOnce = false;
+}
 
 int sActorId = -1;
 
@@ -42,6 +61,10 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
     BattleEnemy* self = (BattleEnemy*)thisx;
     self->defeatTimer = 0;
     self->gone = false;
+    self->defeatFrames = kDefeatFrames;
+    self->idle = NULL;
+    self->idleSpeed = 1.0f;
+    self->playingOnce = false;
     thisx->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED;
 
     switch ((Nocturne::EnemyKind)thisx->params) {
@@ -55,6 +78,21 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
             SkelAnime_Init(play, &self->skelAnime, (SkeletonHeader*)object_st_Skel_005298,
                            (AnimationHeader*)object_st_Anim_000304, self->jointTable, self->morphTable, 30);
             self->baseScale = 0.04f;
+            break;
+        case Nocturne::EnemyKind::QueenGohma:
+            self->idle = (AnimationHeader*)gGohmaIdleCrouchedAnim;
+            SkelAnime_Init(play, &self->skelAnime, (SkeletonHeader*)gGohmaSkel, self->idle, self->jointTable,
+                           self->morphTable, kGohmaLimbs);
+            PlayIdle(self, 0.0f);
+            self->baseScale = 0.01f;
+            self->defeatFrames = kBossDefeatFrames;
+            break;
+        case Nocturne::EnemyKind::GohmaLarva:
+            self->idle = (AnimationHeader*)gObjectGolStandAnim;
+            SkelAnime_Init(play, &self->skelAnime, (SkeletonHeader*)gObjectGolSkel, self->idle, self->jointTable,
+                           self->morphTable, kLarvaLimbs);
+            PlayIdle(self, 0.0f);
+            self->baseScale = 0.01f;
             break;
         case Nocturne::EnemyKind::FireKeese:
         default:
@@ -75,12 +113,16 @@ bool sFast = false;
 
 void BattleEnemy_Update(Actor* thisx, PlayState* play) {
     BattleEnemy* self = (BattleEnemy*)thisx;
-    SkelAnime_Update(&self->skelAnime);
+    bool done = SkelAnime_Update(&self->skelAnime);
     if (sFast) {
-        SkelAnime_Update(&self->skelAnime);
+        done = SkelAnime_Update(&self->skelAnime) || done;
         if (self->defeatTimer > 1) {
             self->defeatTimer--;
         }
+    }
+
+    if (done && self->playingOnce && self->defeatTimer == 0 && !self->gone) {
+        PlayIdle(self, -6.0f);
     }
 
     // Keese hover
@@ -90,7 +132,7 @@ void BattleEnemy_Update(Actor* thisx, PlayState* play) {
 
     if (self->defeatTimer > 0) {
         self->defeatTimer--;
-        f32 t = (f32)self->defeatTimer / kDefeatFrames;
+        f32 t = (f32)self->defeatTimer / self->defeatFrames;
         Actor_SetScale(thisx, self->baseScale * t);
         if (self->defeatTimer == 0) {
             // Don't Actor_Kill here: the battle still holds a pointer to us and removes us when it ends
@@ -118,6 +160,36 @@ static s32 Skulltula_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx**, Vec
         CLOSE_DISPS(play->state.gfxCtx);
     }
     return false;
+}
+
+// Queen Gohma: red shell pulsing toward grey, the red eye and white iris (as BossGoma draws them)
+static s32 Gohma_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx**, Vec3f*, Vec3s*, void*) {
+    OPEN_DISPS(play->state.gfxCtx);
+    f32 pulse = (Math_SinS((s16)(play->gameplayFrames * 0x600)) + 1.0f) * 0.5f;
+    gDPPipeSync(POLY_OPA_DISP++);
+    gDPSetEnvColor(POLY_OPA_DISP++, (u8)(255 - 205 * pulse), (u8)(17 + 33 * pulse), (u8)(50 * pulse), 255);
+    if (limbIndex == kGohmaLimbEye) {
+        gDPSetEnvColor(POLY_OPA_DISP++, 255, 17, 0, 63);
+    } else if (limbIndex == kGohmaLimbIris) {
+        gDPSetEnvColor(POLY_OPA_DISP++, 255, 255, 255, 255);
+    }
+    CLOSE_DISPS(play->state.gfxCtx);
+    return false;
+}
+
+static s32 Larva_OverrideLimbDraw(PlayState* play, s32, Gfx**, Vec3f*, Vec3s*, void*) {
+    OPEN_DISPS(play->state.gfxCtx);
+    gDPPipeSync(POLY_OPA_DISP++);
+    gDPSetEnvColor(POLY_OPA_DISP++, 255, 17, 0, 255);
+    CLOSE_DISPS(play->state.gfxCtx);
+    return false;
+}
+
+// Both Gohma models call segment 8 for a render-mode tweak; an empty list draws them as normal
+static Gfx* EmptyDList(GraphicsContext* gfxCtx) {
+    Gfx* dList = (Gfx*)Graph_Alloc(gfxCtx, sizeof(Gfx));
+    gSPEndDisplayList(dList);
+    return dList;
 }
 
 static void DrawDekuBaba(BattleEnemy* self, PlayState* play) {
@@ -173,6 +245,14 @@ static void BattleEnemy_Draw(Actor* thisx, PlayState* play) {
         case Nocturne::EnemyKind::Skulltula:
             SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Skulltula_OverrideLimbDraw, NULL, self);
             break;
+        case Nocturne::EnemyKind::QueenGohma:
+            gSPSegment(POLY_OPA_DISP++, 0x08, EmptyDList(play->state.gfxCtx));
+            SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Gohma_OverrideLimbDraw, NULL, self);
+            break;
+        case Nocturne::EnemyKind::GohmaLarva:
+            gSPSegment(POLY_OPA_DISP++, 0x08, EmptyDList(play->state.gfxCtx));
+            SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Larva_OverrideLimbDraw, NULL, self);
+            break;
         case Nocturne::EnemyKind::FireKeese:
         default:
             gDPSetEnvColor(POLY_OPA_DISP++, 0, 0, 0, 0); // fire variant tint, as EnFirefly
@@ -222,6 +302,10 @@ Actor* BattleEnemyActor_Spawn(PlayState* play, int kind, float x, float groundY,
         case Nocturne::EnemyKind::Skulltula:
             y = groundY + 35.0f; // hanging just above the floor
             break;
+        case Nocturne::EnemyKind::QueenGohma:
+        case Nocturne::EnemyKind::GohmaLarva:
+            y = groundY;
+            break;
         case Nocturne::EnemyKind::FireKeese:
         default:
             y = groundY + 55.0f; // eye level
@@ -258,4 +342,30 @@ void BattleEnemyActor_SetSize(Actor* actor, float factor) {
     }
     self->baseScale *= factor;
     Actor_SetScale(actor, self->baseScale);
+}
+
+void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim) {
+    BattleEnemy* self = (BattleEnemy*)actor;
+    if (actor == NULL || self->gone || self->defeatTimer > 0) {
+        return;
+    }
+    AnimationHeader* once = NULL;
+    switch ((Nocturne::EnemyKind)actor->params) {
+        case Nocturne::EnemyKind::QueenGohma:
+            once = anim == BattleAnim::Attack   ? (AnimationHeader*)gGohmaAttackAnim
+                   : anim == BattleAnim::Hurt    ? (AnimationHeader*)gGohmaDamageAnim
+                   : anim == BattleAnim::Special ? (AnimationHeader*)gGohmaLayEggsAnim
+                                                 : NULL;
+            break;
+        case Nocturne::EnemyKind::GohmaLarva:
+            once = anim == BattleAnim::Attack ? (AnimationHeader*)gObjectGolJumpHeadbuttAnim : NULL;
+            break;
+        default:
+            break; // the others just keep their idle
+    }
+    if (once == NULL) {
+        return;
+    }
+    Animation_Change(&self->skelAnime, once, 1.0f, 0.0f, Animation_GetLastFrame(once), ANIMMODE_ONCE, -4.0f);
+    self->playingOnce = true;
 }

@@ -192,6 +192,53 @@ Combatant MakeEnemy(EnemyKind kind) {
             c.rupeeMax = 15;
             break;
 
+        case EnemyKind::QueenGohma:
+            // Boss: see MakeQueenGohma for her larvae
+            c.name = "Queen Gohma";
+            c.boss = true;
+            c.pressTurns = 2;
+            c.level = 10;
+            c.maxHp = 520;
+            c.maxMp = 30;
+            c.st = 12;
+            c.ma = 8;
+            c.vi = 9;
+            c.ag = 5;
+            c.lu = 6;
+            SetAffinity(c, Element::Pierce, Affinity::Weak); // the eye
+            SetAffinity(c, Element::Fire, Affinity::Weak);
+            SetAffinity(c, Element::Strike, Affinity::Resist); // armoured shell
+            SetAffinity(c, Element::Shadow, Affinity::Null);
+            c.skills = {
+                Make("Claw Swipe", Element::Slash, TargetType::OneEnemy, 16, 0),
+                Make("Stomp", Element::Strike, TargetType::AllEnemies, 10, 0, 0, 0.9f),
+                Inflicts(Make("Stunning Gaze", Element::Light, TargetType::OneEnemy, 5, 4, 0, 0.9f), Ailment::Stun,
+                         0.45f),
+            };
+            c.xpReward = 450;
+            c.rupeeMin = 50;
+            c.rupeeMax = 80;
+            break;
+
+        case EnemyKind::GohmaLarva:
+            c.name = "Gohma Larva";
+            c.level = 6;
+            c.maxHp = 30;
+            c.st = 8;
+            c.ma = 1;
+            c.vi = 3;
+            c.ag = 7;
+            c.lu = 3;
+            SetAffinity(c, Element::Slash, Affinity::Weak);
+            SetAffinity(c, Element::Pierce, Affinity::Weak);
+            SetAffinity(c, Element::Fire, Affinity::Weak);
+            c.skills = { Make("Headbutt", Element::Strike, TargetType::OneEnemy, 8, 0) };
+            c.timeBonus = 1;
+            c.xpReward = 15;
+            c.rupeeMin = 1;
+            c.rupeeMax = 4;
+            break;
+
         case EnemyKind::FireKeese:
         default:
             c.name = "Fire Keese";
@@ -220,6 +267,18 @@ Combatant MakeEnemy(EnemyKind kind) {
     }
     c.hp = c.maxHp;
     c.mp = c.maxMp;
+    return c;
+}
+
+Combatant MakeQueenGohma(int larvae) {
+    Combatant c = MakeEnemy(EnemyKind::QueenGohma);
+    c.summonAt = 0.5f;
+    c.summonText = "Queen Gohma lays her eggs!";
+    for (int i = 0; i < larvae; i++) {
+        Combatant l = MakeEnemy(EnemyKind::GohmaLarva);
+        l.name += std::string(" ") + (char)('A' + i);
+        c.summons.push_back(l);
+    }
     return c;
 }
 
