@@ -246,11 +246,11 @@ static void BattleEnemy_Draw(Actor* thisx, PlayState* play) {
             SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Skulltula_OverrideLimbDraw, NULL, self);
             break;
         case Nocturne::EnemyKind::QueenGohma:
-            gSPSegment(POLY_OPA_DISP++, 0x08, EmptyDList(play->state.gfxCtx));
+            gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
             SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Gohma_OverrideLimbDraw, NULL, self);
             break;
         case Nocturne::EnemyKind::GohmaLarva:
-            gSPSegment(POLY_OPA_DISP++, 0x08, EmptyDList(play->state.gfxCtx));
+            gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
             SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Larva_OverrideLimbDraw, NULL, self);
             break;
         case Nocturne::EnemyKind::FireKeese:
