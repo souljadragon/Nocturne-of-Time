@@ -6,6 +6,13 @@ set(CMAKE_C_STANDARD 23 CACHE STRING "The C standard to use")
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
 
+# Nocturne of Time: don't let Visual Studio builds re-run CMake by themselves (the ZERO_CHECK step).
+# Re-running from inside MSBuild failed to find the vcpkg packages (SDL2) and left the cache broken, while
+# configuring from a normal shell always works. Re-configure explicitly instead: scripts/update.ps1 does both.
+if(CMAKE_HOST_WIN32)
+    set(CMAKE_SUPPRESS_REGENERATION ON)
+endif()
+
 project(Ship VERSION 9.3.1 LANGUAGES C CXX)
 include(CMake/soh-cvars.cmake)
 include(CMake/lus-cvars.cmake)
