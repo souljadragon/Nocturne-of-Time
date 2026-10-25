@@ -10,6 +10,7 @@
 #include "EquipMenu.h"
 #include "Loot.h"
 #include "../Party.h"
+#include "../Battle/BattleData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -355,6 +356,11 @@ void EquipMenu_Draw(PlayState* play) {
         MenuRect(&gfx, leftX + 1, slotY + 2 + sMenu.slot * 10, leftW - 2, 10, 40, 60, 110, 230);
     }
 
+    // EXP bar, drawn after the text once its row is known
+    int expBarX = -1, expBarY = 0;
+    float expFill = 0.0f;
+    const int expBarW = 80, expBarH = 5;
+
     GfxPrint printer;
     GfxPrint_Init(&printer);
     GfxPrint_Open(&printer, gfx);
@@ -455,6 +461,20 @@ void EquipMenu_Draw(PlayState* play) {
         y += 10;
         snprintf(line, sizeof(line), "Attack +%d  Magic +%d", eff.weaponPower, eff.magicPower);
         text(rightX + 4, y, line, 220, 220, 220);
+        y += 10;
+        // EXP toward the next level
+        text(rightX + 4, y, "EXP", 140, 150, 180);
+        int lvStart = XpForLevel(m.base.level), lvNext = XpForLevel(m.base.level + 1);
+        if (lvNext > lvStart) {
+            expFill = std::clamp((float)(m.xp - lvStart) / (float)(lvNext - lvStart), 0.0f, 1.0f);
+            snprintf(line, sizeof(line), "Next %d", std::max(0, lvNext - m.xp));
+        } else {
+            expFill = 1.0f;
+            snprintf(line, sizeof(line), "Max");
+        }
+        expBarX = rightX + 4 + 4 * 8;
+        expBarY = y + 2;
+        text(expBarX + expBarW + 6, y, line, 200, 200, 210);
         y += 10;
         if (eff.critBonus > 0 || eff.healBonus > 0) {
             snprintf(line, sizeof(line), "Crit +%d%%  Heal +%d%%", (int)std::lround(eff.critBonus * 100),
@@ -575,6 +595,14 @@ void EquipMenu_Draw(PlayState* play) {
     text(leftX, SCREEN_HEIGHT - 26, hint, 150, 150, 170);
 
     gfx = GfxPrint_Close(&printer);
+    if (expBarX >= 0) {
+        gSPDisplayList(gfx++, sMenuRectDL);
+        MenuRect(&gfx, expBarX, expBarY, expBarW, expBarH, 40, 40, 50, 230);
+        int fill = (int)(expBarW * expFill);
+        if (fill > 0) {
+            MenuRect(&gfx, expBarX, expBarY, fill, expBarH, 240, 200, 70, 255);
+        }
+    }
     GfxPrint_Destroy(&printer);
     OVERLAY_DISP = gfx;
     CLOSE_DISPS(play->state.gfxCtx);
