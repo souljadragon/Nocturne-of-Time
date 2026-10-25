@@ -123,6 +123,7 @@ struct BattleEvent {
     int target = -1;
     int amount = 0;
     std::string text;
+    bool hold = false; // the scene keeps this message up until the player presses A
 };
 
 using Events = std::vector<BattleEvent>;

@@ -4240,4 +4240,15 @@ typedef enum {
     // - `PlayState*` play
     VB_DRAW_MINIMAP,
 
+    // Nocturne of Time
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // Whether the HUD (hearts, buttons, rupees, minimap...) draws this frame. Handlers may draw their own
+    // interface onto OVERLAY_DISP instead and return false.
+    // #### `args`
+    // - `PlayState*` play
+    VB_DRAW_INTERFACE,
+
 } GIVanillaBehavior;

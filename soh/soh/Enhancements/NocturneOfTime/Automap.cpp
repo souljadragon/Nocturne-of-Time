@@ -231,9 +231,7 @@ void RegisterAutomap() {
     COND_VB_SHOULD(VB_DRAW_MINIMAP, enabled, {
         PlayState* play = va_arg(args, PlayState*);
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
-            if (Battle_IsActive()) {
-                Battle_DrawUi(play);
-            } else {
+            if (!Battle_IsActive()) { // battles draw their own interface (VB_DRAW_INTERFACE)
                 DrawMap(play);
             }
             *should = false;

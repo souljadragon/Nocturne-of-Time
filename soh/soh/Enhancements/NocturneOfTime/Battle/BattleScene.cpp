@@ -42,13 +42,14 @@ constexpr int kDangerStepMin = 6;     // meter gained per step: min..max
 constexpr int kDangerStepMax = 16;
 constexpr int kDangerYellow = 35;     // gem turns yellow
 constexpr int kDangerRed = 70;        // gem turns red
-constexpr int kMessageFrames = 18;    // how long a battle message stays up (20 game frames = 1 second)
+constexpr int kMessageFrames = 24;    // how long a battle message stays up (20 game frames = 1 second)
 constexpr int kMessageMinFrames = 5;  // A can skip a message after this
 constexpr int kEnemyThinkFrames = 8;  // pause before each enemy acts
 constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
-constexpr f32 kEnemyDistance = 140.0f;
-constexpr f32 kEnemyMinDistance = 75.0f;
+constexpr f32 kEnemyDistance = 160.0f;
+constexpr f32 kEnemyMinDistance = 90.0f;
+constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 
 enum class Ui { None, Intro, Command, Skills, TargetEnemy, TargetAlly, Messages, Ending };
 
@@ -72,6 +73,7 @@ struct Scene {
     std::deque<BattleEvent> queue;
     std::string message;
     bool showingMessage = false;
+    bool messageHeld = false; // waits for A
     bool rewardsGiven = false;
     bool defeat = false;
 
@@ -199,10 +201,27 @@ void StartBattle(PlayState* play, Player* player) {
     Vec3f fwd = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
     Vec3f right = { -Math_CosS(yaw), 0.0f, Math_SinS(yaw) };
     f32 dist = CLAMP(bestDist - 40.0f, kEnemyMinDistance, kEnemyDistance);
-    f32 spacing = enemies.size() >= 3 ? 50.0f : 34.0f;
+    // Space enemies by their size so wide ones (Skulltulas) don't overlap
+    auto widthOf = [](int kind) -> f32 {
+        switch ((EnemyKind)kind) {
+            case EnemyKind::Skulltula:
+                return 80.0f;
+            case EnemyKind::FireKeese:
+                return 46.0f;
+            default:
+                return 42.0f;
+        }
+    };
+    f32 rowWidth = kEnemyGap * (f32)(enemies.size() - 1);
+    for (const Combatant& e : enemies) {
+        rowWidth += widthOf(e.kind);
+    }
     sScene.enemyActors.clear();
+    f32 cursor = -rowWidth * 0.5f;
     for (size_t i = 0; i < enemies.size(); i++) {
-        f32 lateral = ((f32)i - (enemies.size() - 1) * 0.5f) * spacing;
+        f32 w = widthOf(enemies[i].kind);
+        f32 lateral = cursor + w * 0.5f;
+        cursor += w + kEnemyGap;
         Vec3f pos = { player->actor.world.pos.x + fwd.x * dist + right.x * lateral, player->actor.world.pos.y,
                       player->actor.world.pos.z + fwd.z * dist + right.z * lateral };
         Vec3f probe = { pos.x, pos.y + 50.0f, pos.z };
@@ -272,6 +291,7 @@ void QueueRewards() {
     BattleEvent e;
     e.type = BattleEvent::Type::Message;
     e.text = "Got " + std::to_string(xp) + " XP and " + std::to_string(rupees) + " rupees.";
+    e.hold = true;
     sScene.queue.push_back(e);
     Rupees_ChangeBy((s16)rupees);
 
@@ -295,6 +315,7 @@ void QueueRewards() {
             BattleEvent lv;
             lv.type = BattleEvent::Type::Message;
             lv.text = m.stats.name + " reached level " + std::to_string(m.stats.level) + "!";
+            lv.hold = true;
             sScene.queue.push_back(lv);
         }
     }
@@ -350,7 +371,8 @@ void PlayEventEffects(const BattleEvent& e) {
                 sAnalyzedKinds.insert(c.kind);
                 BattleEvent detail;
                 detail.type = BattleEvent::Type::Message;
-                detail.text = AffinitySummary(c);
+                detail.text = c.name + ": " + AffinitySummary(c);
+                detail.hold = true;
                 sScene.queue.push_front(detail);
             }
             break;
@@ -381,6 +403,7 @@ bool NextMessage() {
         }
         if (!e.text.empty()) {
             sScene.message = e.text;
+            sScene.messageHeld = e.hold;
             sScene.showingMessage = true;
             sScene.timer = 0;
             return true;
@@ -606,6 +629,22 @@ void RegisterBattleScene() {
         }
     });
 
+    // During a battle its own interface replaces the HUD (hearts, buttons, minimap) entirely
+    COND_VB_SHOULD(VB_DRAW_INTERFACE, enabled, {
+        PlayState* play = va_arg(args, PlayState*);
+        if (Battle_IsActive() && play->pauseCtx.state == 0) {
+            Battle_DrawUi(play);
+            *should = false;
+        }
+    });
+
+    // Link's hearts aren't his battle HP: no low-health alarm or tired panting while fighting
+    COND_VB_SHOULD(VB_HEALTH_METER_BE_CRITICAL, enabled, {
+        if (Battle_IsActive()) {
+            *should = false;
+        }
+    });
+
     COND_HOOK(OnSceneInit, enabled, [](int16_t sceneNum) {
         // Actors from the old scene are gone; drop the battle without touching them
         sScene.enemyActors.clear();
@@ -676,7 +715,8 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
 
         case Ui::Messages:
             if (sScene.showingMessage) {
-                bool done = sScene.timer >= kMessageFrames || (in.a && sScene.timer >= kMessageMinFrames);
+                bool pressed = in.a && sScene.timer >= kMessageMinFrames;
+                bool done = sScene.messageHeld ? pressed : (sScene.timer >= kMessageFrames || pressed);
                 if (done) {
                     sScene.showingMessage = false;
                     sScene.timer = 0;
@@ -752,57 +792,85 @@ void Battle_DrawUi(PlayState* play) {
     bool partyTurn = b.Phase() == BattlePhase::PartyCommand;
     bool blinkOn = (play->gameplayFrames / 4) % 2 == 0;
 
+    // Layout (320x240): turn icons top-left, messages along the top, commands bottom-left with lists beside
+    // them, party along the bottom. The middle of the screen is left to the enemies.
+    const int iconY = 16;
+    const int msgX = 10, msgY = 32, msgW = SCREEN_WIDTH - 20;
+    const size_t msgChars = (size_t)(msgW - 24) / 8;
+    // Long messages wrap onto a second line at a space
+    std::string msg1 = sScene.message, msg2;
+    if (msg1.size() > msgChars) {
+        size_t cut = msg1.rfind(' ', msgChars);
+        cut = (cut == std::string::npos) ? msgChars : cut;
+        msg2 = msg1.substr(cut + 1, msgChars);
+        msg1 = msg1.substr(0, cut);
+    }
+    const int msgH = msg2.empty() ? 14 : 24;
+    const int cmdX = 10, cmdY = 134, cmdW = 76, cmdH = CMD_COUNT * 10 + 4;
+    const int listX = 92, listW = SCREEN_WIDTH - 102, listBottom = cmdY + cmdH;
+    const int partyX = 10, partyY = 204, partyW = SCREEN_WIDTH - 20, partyH = 30;
+    const int colW = partyW / 2;
+
+    bool commandUi = sScene.ui == Ui::Command || sScene.ui == Ui::Skills || sScene.ui == Ui::TargetEnemy ||
+                     sScene.ui == Ui::TargetAlly;
+    const Combatant& active = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
+    int listRows = 0;
+    if (sScene.ui == Ui::Skills) {
+        listRows = (int)active.skills.size() - 1;
+    } else if (sScene.ui == Ui::TargetEnemy) {
+        listRows = (int)b.Enemies().size() + 2; // + two lines of affinity info
+    } else if (sScene.ui == Ui::TargetAlly) {
+        listRows = (int)b.Party().size();
+    }
+    int listH = listRows * 10 + 4;
+    int listY = listBottom - listH;
+
     OPEN_DISPS(play->state.gfxCtx);
     Gfx* gfx = OVERLAY_DISP;
     gSPDisplayList(gfx++, sBattleRectDL);
 
-    // Damage flash on the whole screen when the party is hit
     if (sScene.damageFlash > 0) {
         Rect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 255, 30, 20, (u8)(sScene.damageFlash * 18));
     }
 
-    // Press Turn icons, top centre: blue for the party, red for enemies; blinking icons flash
+    // Press Turn icons: blue for the party, red for enemies; blinking icons flash
     const PressTurns& icons = b.Icons();
-    int total = icons.Total();
-    int iconX = SCREEN_WIDTH / 2 - (total * 14) / 2;
-    for (int i = 0; i < total; i++) {
+    for (int i = 0; i < icons.Total(); i++) {
         bool blinking = i >= icons.solid;
+        int x = 10 + i * 13;
+        Rect(&gfx, x, iconY, 10, 10, 20, 20, 30, 220);
         if (blinking && !blinkOn) {
             continue;
         }
         u8 r = partyTurn ? 70 : 255, g = partyTurn ? 160 : 60, bl = partyTurn ? 255 : 60;
-        Rect(&gfx, iconX + i * 14, 12, 10, 10, 20, 20, 30, 220);
-        Rect(&gfx, iconX + i * 14 + 1, 13, 8, 8, r, g, bl, 255);
+        Rect(&gfx, x + 1, iconY + 1, 8, 8, r, g, bl, 255);
     }
 
-    // Panels (text goes on top afterwards)
-    bool commandUi = sScene.ui == Ui::Command || sScene.ui == Ui::Skills || sScene.ui == Ui::TargetEnemy ||
-                     sScene.ui == Ui::TargetAlly;
-    if (commandUi) {
-        Panel(&gfx, 14, 70, 88, 6 * 10 + 8);
-    }
-    if (sScene.ui == Ui::Skills) {
-        Panel(&gfx, 108, 70, 200, ((int)b.Party()[b.ActivePartyMember()].skills.size() - 1) * 10 + 8);
-    }
-    if (sScene.ui == Ui::TargetEnemy || sScene.ui == Ui::TargetAlly) {
-        int rows = sScene.ui == Ui::TargetEnemy ? (int)b.Enemies().size() : (int)b.Party().size();
-        Panel(&gfx, 108, 70, 200, rows * 10 + 8 + (sScene.ui == Ui::TargetEnemy ? 20 : 0));
-    }
     if (sScene.showingMessage) {
-        Panel(&gfx, 20, 150, SCREEN_WIDTH - 40, 14);
+        Panel(&gfx, msgX, msgY, msgW, msgH);
     }
-    // Party panel, bottom right, with HP/MP bars
-    const int partyX = 128, partyY = 182;
-    Panel(&gfx, partyX, partyY, 184, (int)b.Party().size() * 20 + 4);
-    for (size_t i = 0; i < b.Party().size(); i++) {
+    if (commandUi) {
+        Panel(&gfx, cmdX, cmdY, cmdW, cmdH);
+    }
+    if (listRows > 0) {
+        Panel(&gfx, listX, listY, listW, listH);
+    }
+
+    // Party: one column per member; the one choosing a command is lit up
+    Panel(&gfx, partyX, partyY, partyW, partyH);
+    for (size_t i = 0; i < b.Party().size() && i < 2; i++) {
         const Combatant& c = b.Party()[i];
-        int y = partyY + 3 + (int)i * 20;
-        int hpW = c.maxHp > 0 ? 60 * c.hp / c.maxHp : 0;
-        int mpW = c.maxMp > 0 ? 60 * c.mp / c.maxMp : 0;
-        Rect(&gfx, partyX + 118, y + 11, 60, 3, 40, 40, 40, 255);
-        Rect(&gfx, partyX + 118, y + 11, hpW, 3, 80, 220, 90, 255);
-        Rect(&gfx, partyX + 118, y + 15, 60, 2, 40, 40, 40, 255);
-        Rect(&gfx, partyX + 118, y + 15, mpW, 2, 90, 140, 255, 255);
+        int x = partyX + (int)i * colW;
+        bool isActive = partyTurn && commandUi && (int)i == b.ActivePartyMember();
+        if (isActive) {
+            Rect(&gfx, x + 1, partyY + 1, colW - 2, partyH - 2, 40, 60, 110, 230);
+        }
+        int hpW = c.maxHp > 0 ? 50 * c.hp / c.maxHp : 0;
+        int mpW = c.maxMp > 0 ? 50 * c.mp / c.maxMp : 0;
+        Rect(&gfx, x + colW - 56, partyY + 6, 50, 4, 40, 40, 40, 255);
+        Rect(&gfx, x + colW - 56, partyY + 6, hpW, 4, 80, 220, 90, 255);
+        Rect(&gfx, x + colW - 56, partyY + 17, 50, 3, 40, 40, 40, 255);
+        Rect(&gfx, x + colW - 56, partyY + 17, mpW, 3, 90, 140, 255, 255);
     }
 
     // ---- Text
@@ -815,83 +883,89 @@ void Battle_DrawUi(PlayState* play) {
         GfxPrint_SetPosPx(&printer, x, y);
         GfxPrint_Printf(&printer, "%s", s.c_str());
     };
+    auto option = [&](int x, int y, const std::string& s, bool selected, bool enabled) {
+        u8 shade = enabled ? 210 : 100;
+        text(x, y, std::string(selected ? ">" : " ") + s, selected ? 255 : shade, selected ? 230 : shade,
+             selected ? 90 : shade);
+    };
 
-    text(SCREEN_WIDTH / 2 - 40, 2, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
+    text(10 + icons.Total() * 13 + 4, iconY + 1, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
+
+    if (sScene.showingMessage) {
+        text(msgX + msgW / 2 - (int)msg1.size() * 4, msgY + 3, msg1, 255, 255, 255);
+        if (!msg2.empty()) {
+            text(msgX + msgW / 2 - (int)msg2.size() * 4, msgY + 13, msg2, 255, 255, 255);
+        }
+        if (sScene.messageHeld && blinkOn) {
+            text(msgX + msgW - 12, msgY + 3, "A", 120, 220, 120);
+        }
+    }
 
     if (commandUi) {
         for (int i = 0; i < CMD_COUNT; i++) {
-            bool sel = sScene.ui == Ui::Command && i == sScene.commandCursor;
-            text(18, 74 + i * 10, std::string(sel ? ">" : " ") + kCommandNames[i], sel ? 255 : 200, sel ? 230 : 200,
-                 sel ? 90 : 200);
+            option(cmdX + 2, cmdY + 3 + i * 10, kCommandNames[i], sScene.ui == Ui::Command && i == sScene.commandCursor,
+                   true);
         }
     }
 
     if (sScene.ui == Ui::Skills) {
-        const Combatant& m = b.Party()[b.ActivePartyMember()];
-        for (int i = 1; i < (int)m.skills.size(); i++) {
-            const Skill& s = m.skills[i];
-            bool sel = i == sScene.skillCursor;
-            bool usable = b.CanUseSkill(i);
-            std::string cost = s.mpCost > 0 ? std::to_string(s.mpCost) + "MP" : (s.hpCost > 0 ? std::to_string(s.hpCost) + "HP" : "");
-            std::string line = std::string(sel ? ">" : " ") + s.name;
-            while (line.size() < 17) {
+        for (int i = 1; i < (int)active.skills.size(); i++) {
+            const Skill& s = active.skills[i];
+            std::string cost = s.mpCost > 0 ? std::to_string(s.mpCost) + "MP"
+                                            : (s.hpCost > 0 ? std::to_string(s.hpCost) + "HP" : "");
+            std::string line = s.name;
+            while (line.size() < 15) {
+                line += ' ';
+            }
+            line += std::string(ElementName(s.element)).substr(0, 6);
+            while (line.size() < 21) {
                 line += ' ';
             }
             line += cost;
-            u8 shade = usable ? 210 : 110;
-            text(112, 74 + (i - 1) * 10, line, sel ? 255 : shade, sel ? 230 : shade, sel ? 90 : shade);
+            option(listX + 2, listY + 3 + (i - 1) * 10, line, i == sScene.skillCursor, b.CanUseSkill(i));
         }
     }
 
     if (sScene.ui == Ui::TargetEnemy) {
         const std::vector<Combatant>& e = b.Enemies();
         for (int i = 0; i < (int)e.size(); i++) {
-            bool sel = i == sScene.targetCursor;
-            u8 shade = e[i].Alive() ? 210 : 90;
-            text(112, 74 + i * 10, std::string(sel ? ">" : " ") + e[i].name, sel ? 255 : shade, sel ? 230 : shade,
-                 sel ? 90 : shade);
+            option(listX + 2, listY + 3 + i * 10, e[i].name, i == sScene.targetCursor, e[i].Alive());
         }
-        // Known affinities for the highlighted enemy
         const Combatant& t = e[std::clamp(sScene.targetCursor, 0, (int)e.size() - 1)];
         std::string info = sAnalyzedKinds.count(t.kind) ? AffinitySummary(t) : "Unknown - try Analyze";
-        // Wrap at a space to fit the 24-character panel
+        const size_t width = (size_t)(listW - 12) / 8;
         std::string first = info, second;
-        if (info.size() > 24) {
-            size_t cut = info.rfind(' ', 24);
-            cut = (cut == std::string::npos) ? 24 : cut;
+        if (info.size() > width) {
+            size_t cut = info.rfind(' ', width);
+            cut = (cut == std::string::npos) ? width : cut;
             first = info.substr(0, cut);
-            second = info.substr(cut + 1, 24);
+            second = info.substr(cut + 1, width);
         }
-        text(112, 74 + (int)e.size() * 10 + 2, first, 150, 200, 255);
+        int infoY = listY + 3 + (int)e.size() * 10;
+        text(listX + 10, infoY, first, 150, 200, 255);
         if (!second.empty()) {
-            text(112, 74 + (int)e.size() * 10 + 11, second, 150, 200, 255);
+            text(listX + 10, infoY + 10, second, 150, 200, 255);
         }
     }
 
     if (sScene.ui == Ui::TargetAlly) {
         const std::vector<Combatant>& p = b.Party();
         for (int i = 0; i < (int)p.size(); i++) {
-            bool sel = i == sScene.targetCursor;
-            text(112, 74 + i * 10, std::string(sel ? ">" : " ") + p[i].name, sel ? 255 : 210, sel ? 230 : 210,
-                 sel ? 90 : 210);
+            char line[40];
+            snprintf(line, sizeof(line), "%-8s HP %3d/%3d", p[i].name.c_str(), p[i].hp, p[i].maxHp);
+            option(listX + 2, listY + 3 + i * 10, line, i == sScene.targetCursor, p[i].Alive());
         }
     }
 
-    if (sScene.showingMessage) {
-        std::string msg = sScene.message.substr(0, 34);
-        text(SCREEN_WIDTH / 2 - (int)msg.size() * 4, 153, msg, 255, 255, 255);
-    }
-
-    for (size_t i = 0; i < b.Party().size(); i++) {
+    for (size_t i = 0; i < b.Party().size() && i < 2; i++) {
         const Combatant& c = b.Party()[i];
-        int y = partyY + 3 + (int)i * 20;
-        bool active = partyTurn && (int)i == b.ActivePartyMember() && sScene.ui != Ui::Messages;
-        char line[48];
-        snprintf(line, sizeof(line), "%s%-6s Lv%-2d", active ? ">" : " ", c.name.c_str(), c.level);
-        u8 nameShade = c.Alive() ? 255 : 120;
-        text(partyX + 2, y, line, active ? 255 : nameShade, active ? 230 : nameShade, active ? 90 : nameShade);
+        int x = partyX + (int)i * colW + 4;
+        char line[40];
+        snprintf(line, sizeof(line), "%-6s Lv%d", c.name.c_str(), c.level);
+        u8 shade = c.Alive() ? 255 : 110;
+        text(x, partyY + 4, line, shade, shade, shade);
         snprintf(line, sizeof(line), "HP%3d MP%3d", c.hp, c.mp);
-        text(partyX + 2, y + 9, line, 200, 220, 200);
+        text(x, partyY + 15, line, 200, 220, 200);
     }
 
     gfx = GfxPrint_Close(&printer);

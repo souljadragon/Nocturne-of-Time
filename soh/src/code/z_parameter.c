@@ -5155,6 +5155,11 @@ void Interface_Draw(PlayState* play) {
         return;
     }
 
+    // Nocturne of Time: battles replace the whole HUD with their own interface
+    if (!GameInteractor_Should(VB_DRAW_INTERFACE, true, play)) {
+        return;
+    }
+
     OPEN_DISPS(play->state.gfxCtx);
 
     gSPSegment(OVERLAY_DISP++, 0x02, interfaceCtx->parameterSegment);
