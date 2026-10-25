@@ -213,9 +213,11 @@ void Battle::AfterAction(Events& out) {
 }
 
 int Battle::BaseDamage(const Combatant& attacker, const Combatant& defender, const Skill& skill) const {
-    int atk = IsPhysical(skill.element) ? attacker.st : attacker.ma;
+    bool physical = IsPhysical(skill.element);
+    int atk = physical ? attacker.st : attacker.ma;
+    int power = skill.power + (physical ? attacker.weaponPower : attacker.magicPower);
     float ratio = (float)(atk + attacker.level + 10) / (float)(defender.vi + defender.level + 10);
-    return std::max(1, (int)std::lround(skill.power * ratio));
+    return std::max(1, (int)std::lround(power * ratio));
 }
 
 Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIndex, const Skill& skill,
@@ -228,7 +230,8 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
             return Outcome::Normal;
         }
         int before = def.hp;
-        def.hp = std::min(def.maxHp, def.hp + skill.power);
+        int amount = (int)std::lround((skill.power + user.magicPower) * (1.0f + user.healBonus));
+        def.hp = std::min(def.maxHp, def.hp + amount);
         out.push_back(Ev(BattleEvent::Type::Heal, userIsEnemy, userIndex, targetIsEnemy, target, def.hp - before,
                          def.name + " recovers " + std::to_string(def.hp - before) + " HP"));
         return Outcome::Normal;
@@ -281,7 +284,7 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     bool weak = aff == Affinity::Weak;
     bool crit = false;
     if (IsPhysical(skill.element) && !def.guarding) {
-        crit = mRand() < 0.05f + user.lu * 0.005f;
+        crit = mRand() < 0.05f + user.lu * 0.005f + user.critBonus;
     }
 
     float mult = 1.0f;

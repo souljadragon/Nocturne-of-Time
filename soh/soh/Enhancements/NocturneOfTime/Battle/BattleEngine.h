@@ -62,6 +62,12 @@ struct Combatant {
     std::array<Affinity, (size_t)Element::Count> affinity{}; // all Normal by default
     std::vector<Skill> skills; // skills[0] is the basic Attack
 
+    // From equipment (see Loot): added to the power of physical / magic skills, and modifiers
+    int weaponPower = 0;
+    int magicPower = 0;
+    float critBonus = 0.0f; // added to the critical chance of physical attacks
+    float healBonus = 0.0f; // heals restore (1 + healBonus) times their power
+
     int xpReward = 0;
     int rupeeMin = 0, rupeeMax = 0;
 
@@ -124,7 +130,8 @@ struct BattleEvent {
     int target = -1;
     int amount = 0;
     std::string text;
-    bool hold = false; // the scene keeps this message up until the player presses A
+    bool hold = false;  // the scene keeps this message up until the player presses A
+    uint32_t color = 0; // 0xRRGGBB00 text colour for the scene (0 = default white), e.g. loot rarity
 };
 
 using Events = std::vector<BattleEvent>;

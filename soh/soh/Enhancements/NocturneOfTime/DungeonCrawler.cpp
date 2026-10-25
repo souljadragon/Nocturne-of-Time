@@ -19,6 +19,7 @@
 #include "DungeonCrawler.h"
 #include "Automap.h"
 #include "Battle/BattleScene.h"
+#include "Loot/EquipMenu.h"
 
 #include <math.h>
 
@@ -336,13 +337,14 @@ void Deactivate(Player* player) {
     sCrawler.action = Action::None;
     sCrawler.bumpAmount = 0.0f;
     Battle_Abort();
+    EquipMenu_Close();
     if (player != NULL) {
         player->actor.shape.shadowDraw = ActorShadow_DrawFeet;
     }
 }
 
 void ClearMovementInput(Input* input) {
-    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L;
+    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L | BTN_R;
     for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
         pad->stick_x = 0;
         pad->stick_y = 0;
@@ -361,9 +363,20 @@ bool OnFilterInput(Player* player, Input* input) {
         Activate(player);
     }
 
-    if (Battle_IsActive()) {
-        // The battle reads the controller; Link himself does nothing but finish turning to face the enemies
-        Battle_Update(play, player, input);
+    // R opens the party / equipment menu (not during a battle)
+    if (!Battle_IsActive() && !EquipMenu_IsOpen() && (input->press.button & BTN_R) &&
+        sCrawler.action == Action::None) {
+        EquipMenu_Open();
+        input->press.button &= ~BTN_R;
+    }
+
+    if (Battle_IsActive() || EquipMenu_IsOpen()) {
+        // The battle or menu reads the controller; Link himself does nothing but finish turning to face the enemies
+        if (Battle_IsActive()) {
+            Battle_Update(play, player, input);
+        } else {
+            EquipMenu_Update(input);
+        }
         ClearMovementInput(input);
         for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
             pad->button &= ~(BTN_A | BTN_B | BTN_CLEFT | BTN_CDOWN | BTN_CRIGHT | BTN_CUP | BTN_R);

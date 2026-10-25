@@ -11,6 +11,8 @@
 #include "BattleData.h"
 #include "BattleEngine.h"
 #include "BattleEnemyActor.h"
+#include "../Loot/Loot.h"
+#include "../Party.h"
 #include "../DungeonCrawler.h"
 
 #include <algorithm>
@@ -47,6 +49,9 @@ constexpr int kMessageMinFrames = 5;  // A can skip a message after this
 constexpr int kEnemyThinkFrames = 8;  // pause before each enemy acts
 constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
+constexpr float kDropChance = 0.35f; // per defeated enemy
+constexpr int kMaxDrops = 2;         // per battle
+constexpr float kLootLuck = 0.0f;    // rarity luck; the moon phase will drive this
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
@@ -58,11 +63,6 @@ const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Guard", "Pass", "An
 
 constexpr int kPendingAnalyze = -2;
 
-struct PartyMember {
-    Combatant stats;
-    int xp = 0;
-};
-
 struct Scene {
     std::unique_ptr<Battle> battle;
     std::vector<Actor*> enemyActors; // parallel to battle->Enemies()
@@ -72,6 +72,7 @@ struct Scene {
 
     std::deque<BattleEvent> queue;
     std::string message;
+    uint32_t messageColor = 0;
     bool showingMessage = false;
     bool messageHeld = false; // waits for A
     bool rewardsGiven = false;
@@ -89,23 +90,16 @@ struct Scene {
 };
 
 Scene sScene;
-std::vector<PartyMember> sParty;
 std::set<int> sAnalyzedKinds; // bestiary: enemy kinds whose affinities are known
 int sDanger = 0;
 s16 sLastScene = -1;
 
 void EnsureParty() {
-    if (sParty.empty()) {
-        sParty.push_back({ MakeLink(kStartLevel), XpForLevel(kStartLevel) });
-        sParty.push_back({ MakeSaria(kStartLevel), XpForLevel(kStartLevel) });
-    }
+    Party_EnsureCreated(kStartLevel);
 }
 
 void HealParty() {
-    for (PartyMember& m : sParty) {
-        m.stats.hp = m.stats.maxHp;
-        m.stats.mp = m.stats.maxMp;
-    }
+    Party_HealAll();
 }
 
 void PlaySfx(u16 id) {
@@ -259,9 +253,16 @@ void StartBattle(PlayState* play, Player* player) {
             BattleEnemyActor_Spawn(play, enemies[i].kind, pos.x, floorY, pos.z, (s16)(yaw + 0x8000)));
     }
 
+    // Battle stats include equipment
     std::vector<Combatant> party;
-    for (PartyMember& m : sParty) {
-        party.push_back(m.stats);
+    for (const PartyMember& m : Party_Members()) {
+        party.push_back(Party_Effective(m));
+    }
+    // Mask of Truth: every foe's affinities are known from the start
+    if (Party_HasEffect(UniqueEffect::AutoAnalyze)) {
+        for (const Combatant& e : enemies) {
+            sAnalyzedKinds.insert(e.kind);
+        }
     }
     sScene.battle = std::make_unique<Battle>(party, enemies, [] { return Rand_ZeroOne() * 0.99999f; });
     sScene.queue.clear();
@@ -271,6 +272,7 @@ void StartBattle(PlayState* play, Player* player) {
     sScene.ui = Ui::Intro;
     sScene.timer = 0;
     sScene.message = enemies.size() == 1 ? "A " + enemies[0].name + " appears!" : "Enemies appear!";
+    sScene.messageColor = 0;
     sScene.showingMessage = true;
     PlaySfx(NA_SE_SY_FSEL_DECIDE_L);
 }
@@ -295,9 +297,10 @@ void EndBattle() {
     if (sScene.battle) {
         // Carry HP/MP back to the party; a fallen ally gets back up with 1 HP
         const std::vector<Combatant>& after = sScene.battle->Party();
-        for (size_t i = 0; i < after.size() && i < sParty.size(); i++) {
-            sParty[i].stats.hp = std::max(after[i].hp, 1);
-            sParty[i].stats.mp = after[i].mp;
+        std::vector<PartyMember>& members = Party_Members();
+        for (size_t i = 0; i < after.size() && i < members.size(); i++) {
+            members[i].base.hp = std::max(after[i].hp, 1);
+            members[i].base.mp = after[i].mp;
         }
     }
     KillEnemyActors();
@@ -320,33 +323,57 @@ void QueueRewards() {
     Rupees_ChangeBy((s16)rupees);
 
     const std::vector<Combatant>& after = b.Party();
-    for (size_t i = 0; i < sParty.size(); i++) {
-        PartyMember& m = sParty[i];
-        m.stats.hp = after[i].hp;
-        m.stats.mp = after[i].mp;
+    std::vector<PartyMember>& members = Party_Members();
+    for (size_t i = 0; i < members.size() && i < after.size(); i++) {
+        PartyMember& m = members[i];
+        m.base.hp = after[i].hp;
+        m.base.mp = after[i].mp;
         if (!after[i].Alive()) {
             continue; // fallen allies earn nothing
         }
         m.xp += xp;
-        while (m.xp >= XpForLevel(m.stats.level + 1)) {
-            int oldMaxHp = m.stats.maxHp, oldMaxMp = m.stats.maxMp;
-            if (!LevelUp(m.stats)) {
+        while (m.xp >= XpForLevel(m.base.level + 1)) {
+            int oldMaxHp = m.base.maxHp, oldMaxMp = m.base.maxMp;
+            if (!LevelUp(m.base)) {
                 break;
             }
             // Level-ups add the gained max HP/MP to current HP/MP
-            m.stats.hp += m.stats.maxHp - oldMaxHp;
-            m.stats.mp += m.stats.maxMp - oldMaxMp;
+            m.base.hp += m.base.maxHp - oldMaxHp;
+            m.base.mp += m.base.maxMp - oldMaxMp;
             BattleEvent lv;
             lv.type = BattleEvent::Type::Message;
-            lv.text = m.stats.name + " reached level " + std::to_string(m.stats.level) + "!";
+            lv.text = m.base.name + " reached level " + std::to_string(m.base.level) + "!";
             lv.hold = true;
             sScene.queue.push_back(lv);
         }
+        Party_ClampToMax(m);
     }
+
+    // Drops: each defeated enemy has a chance to leave an item (at most two per battle)
+    int itemLevel = 1, drops = 0;
+    for (const Combatant& e : b.Enemies()) {
+        itemLevel = std::max(itemLevel, e.level);
+    }
+    LootRng rng = [] { return Rand_ZeroOne() * 0.99999f; };
+    for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops; i++) {
+        if (Rand_ZeroOne() < kDropChance) {
+            Item item = RollItem(itemLevel, kLootLuck, rng);
+            Party_Bag().push_back(item);
+            drops++;
+            BattleEvent found;
+            found.type = BattleEvent::Type::Message;
+            found.text = "Found " + item.name + "!";
+            found.hold = true;
+            Rgb c = RarityColor(item.rarity);
+            found.color = ((uint32_t)c.r << 24) | ((uint32_t)c.g << 16) | ((uint32_t)c.b << 8);
+            sScene.queue.push_back(found);
+        }
+    }
+
     // Keep the engine's copy in step so EndBattle doesn't undo the level-up HP
-    for (size_t i = 0; i < sParty.size(); i++) {
-        b.PartyMutable()[i].hp = sParty[i].stats.hp;
-        b.PartyMutable()[i].mp = sParty[i].stats.mp;
+    for (size_t i = 0; i < members.size() && i < after.size(); i++) {
+        b.PartyMutable()[i].hp = members[i].base.hp;
+        b.PartyMutable()[i].mp = members[i].base.mp;
     }
 }
 
@@ -442,6 +469,7 @@ bool NextMessage() {
         if (!e.text.empty()) {
             sScene.message = e.text;
             sScene.messageHeld = e.hold;
+            sScene.messageColor = e.color;
             sScene.showingMessage = true;
             sScene.timer = 0;
             return true;
@@ -703,7 +731,7 @@ void RegisterBattleScene() {
     });
 
     COND_HOOK(OnLoadGame, enabled, [](int32_t) {
-        sParty.clear();
+        Party_Reset();
         sAnalyzedKinds.clear();
         sDanger = 0;
         sLastScene = -1;
@@ -966,9 +994,15 @@ void Battle_DrawUi(PlayState* play) {
     text(10 + icons.Total() * 13 + 4, iconY + 1, partyTurn ? "PRESS TURN" : "ENEMY TURN", 230, 230, 230);
 
     if (sScene.showingMessage) {
-        text(msgX + msgW / 2 - (int)msg1.size() * 4, msgY + 3, msg1, 255, 255, 255);
+        u8 mr = 255, mg = 255, mb = 255;
+        if (sScene.messageColor != 0) {
+            mr = (sScene.messageColor >> 24) & 0xFF;
+            mg = (sScene.messageColor >> 16) & 0xFF;
+            mb = (sScene.messageColor >> 8) & 0xFF;
+        }
+        text(msgX + msgW / 2 - (int)msg1.size() * 4, msgY + 3, msg1, mr, mg, mb);
         if (!msg2.empty()) {
-            text(msgX + msgW / 2 - (int)msg2.size() * 4, msgY + 13, msg2, 255, 255, 255);
+            text(msgX + msgW / 2 - (int)msg2.size() * 4, msgY + 13, msg2, mr, mg, mb);
         }
         if (sScene.messageHeld && blinkOn) {
             text(msgX + msgW - 10, msgY + msgH + 2, "A", 120, 220, 120); // below the box, clear of the text
