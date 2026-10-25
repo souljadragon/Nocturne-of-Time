@@ -119,14 +119,14 @@ void Automap_Draw(PlayState* play, int boxX, int boxY, int boxSize) {
     auto sceneIt = sMaps.find(play->sceneNum);
     CellKey here = KeyFor(player->actor.world.pos);
 
-    const s32 radius = sLarge ? 12 : 4; // tiles shown each side of Link
+    const s32 radius = sLarge ? 12 : 4; // tiles shown each side of Link (big map: 25 x 25 tiles at 8px)
     // screen pixels per tile: the corner map fills its box (inside a 4px window edge)
     const s32 cellPx = sLarge ? 8 : std::max(4, (boxSize - 8) / (2 * radius + 1));
     const s32 sizePx = (2 * radius + 1) * cellPx;
     s32 x0, y0;
     if (sLarge) {
         x0 = SCREEN_WIDTH / 2 - sizePx / 2;
-        y0 = SCREEN_HEIGHT / 2 - sizePx / 2;
+        y0 = 120 - sizePx / 2; // between the big map's title and key
     } else {
         x0 = boxX + (boxSize - sizePx) / 2;
         y0 = boxY + (boxSize - sizePx) / 2;
@@ -138,7 +138,7 @@ void Automap_Draw(PlayState* play, int boxX, int boxY, int boxSize) {
 
     // Black window with a white rule
     if (sLarge) {
-        p.Window(x0 - 4, y0 - 4, sizePx + 8, sizePx + 8);
+        p.Window(x0 - 4, y0 - 4, sizePx + 8, sizePx + 8, Retro::White, 255);
     } else {
         p.Window(boxX, boxY, boxSize, boxSize);
     }

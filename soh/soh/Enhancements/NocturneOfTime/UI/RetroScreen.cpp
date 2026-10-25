@@ -8,6 +8,7 @@
 #include "../DungeonCrawler.h"
 #include "../Battle/BattleScene.h"
 
+#include <cmath>
 #include <memory>
 
 extern "C" {
@@ -23,6 +24,21 @@ extern PlayState* gPlayState;
 namespace {
 
 bool sViewportChanged = false;
+f32 sCameraFov = 0.0f; // the camera's own field of view, before we zoom it for the window
+f32 sZoomedFov = -1.0f;
+
+// The window is shorter than the screen, so keep things the size they were full-screen: narrow the vertical
+// field of view by the window's share of the screen height. The horizontal view then stays about as wide as
+// OoT's normal 4:3 view. The camera sets view.fovy on its updates; draws without an update must not zoom twice.
+void ZoomForWindow(PlayState* play, const RetroRect& r) {
+    if (play->view.fovy != sZoomedFov) {
+        sCameraFov = play->view.fovy;
+    }
+    f32 half = sCameraFov * 0.5f * (M_PI / 180.0f);
+    f32 zoomed = 2.0f * atanf(tanf(half) * (f32)r.h / (f32)SCREEN_HEIGHT) * (180.0f / M_PI);
+    play->view.fovy = zoomed;
+    sZoomedFov = zoomed;
+}
 
 // Navi floats in front of the first-person camera (and her glow fills the view): she isn't drawn while the
 // crawler is active. Her draw function is put back afterwards, if she is still the same actor.
@@ -78,6 +94,7 @@ void RegisterRetroScreen() {
         Player* player = GET_PLAYER(play);
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
             SetViewport(play, kView);
+            ZoomForWindow(play, kView);
             sViewportChanged = true;
             HideNavi(player);
             // No cinematic black bars: they would clip the top and bottom of the view window
@@ -86,8 +103,12 @@ void RegisterRetroScreen() {
         } else {
             if (sViewportChanged) {
                 SetViewport(play, { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT });
+                if (play->view.fovy == sZoomedFov) {
+                    play->view.fovy = sCameraFov; // until the camera's next update
+                }
                 sViewportChanged = false;
             }
+            sZoomedFov = -1.0f;
             ShowNavi(player);
         }
     });

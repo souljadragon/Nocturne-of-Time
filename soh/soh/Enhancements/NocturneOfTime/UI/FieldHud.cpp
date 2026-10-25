@@ -73,6 +73,34 @@ static void DrawFieldHud(PlayState* play) {
     Party_EnsureCreated(kStartLevel);
     const RetroRect view = kView;
 
+    // The big map (L) is a screen of its own: black, the map in the middle, a title and a key
+    if (Automap_IsLarge()) {
+        OPEN_DISPS(play->state.gfxCtx);
+        {
+            Painter p(&OVERLAY_DISP);
+            p.FillScreen(Black);
+            p.Text(8, 4, std::string(SceneTitle(play)) + " MAP", White);
+            p.Text(176, 4, "FACING", Green);
+            p.Text(176 + 7 * kCharW, 4, FacingName(DungeonCrawler_GetFacing()), Yellow);
+        }
+        CLOSE_DISPS(play->state.gfxCtx);
+        Automap_Draw(play, 0, 0, 0);
+        OPEN_DISPS(play->state.gfxCtx);
+        {
+            Painter p(&OVERLAY_DISP);
+            p.Rect(8, 229, 7, 7, Yellow);
+            p.Text(18, 229, "YOU", White);
+            p.Rect(56, 229, 7, 7, GreenDark);
+            p.Text(66, 229, "FLOOR", White);
+            p.Rect(120, 232, 7, 2, Blue);
+            p.Text(130, 229, "DOOR", White);
+            p.TextRight(SCREEN_WIDTH - 8, 229, "L:CLOSE", Grey);
+            MoonHud_Tick();
+        }
+        CLOSE_DISPS(play->state.gfxCtx);
+        return;
+    }
+
     OPEN_DISPS(play->state.gfxCtx);
     {
         Painter p(&OVERLAY_DISP);
