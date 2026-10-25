@@ -11,7 +11,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ShipInit.hpp"
 #include "Automap.h"
-#include "Moon/MoonHud.h"
+#include "UI/RetroUI.h"
 #include "DungeonCrawler.h"
 #include "Battle/BattleScene.h"
 #include "soh/frame_interpolation.h"
@@ -103,33 +103,17 @@ Cell ScanCell(PlayState* play, const Vec3f& pos) {
 
 // ---- Drawing --------------------------------------------------------------------------------------------
 
-struct Color {
-    u8 r, g, b, a;
-};
-constexpr Color kBackground = { 0, 0, 0, 150 };
-constexpr Color kFrame = { 120, 140, 170, 200 };
-constexpr Color kFloor = { 40, 90, 170, 190 };
-constexpr Color kWall = { 235, 240, 255, 255 };
-constexpr Color kDoor = { 250, 200, 60, 255 };
-constexpr Color kPlayer = { 255, 130, 40, 255 };
-
-// Same setup as the interface's solid rectangles: 1-cycle, primitive colour, translucent.
-Gfx sSetupRectDL[] = {
-    gsDPPipeSync(),
-    gsSPClearGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BOTH | G_FOG | G_LIGHTING | G_TEXTURE_GEN |
-                          G_TEXTURE_GEN_LINEAR | G_SHADING_SMOOTH | G_LOD),
-    gsDPSetOtherMode(G_AD_DISABLE | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE | G_TL_TILE |
-                         G_TD_CLAMP | G_TP_NONE | G_CYC_1CYCLE | G_PM_1PRIMITIVE,
-                     G_AC_NONE | G_ZS_PIXEL | G_RM_CLD_SURF | G_RM_CLD_SURF2),
-    gsDPSetCombineMode(G_CC_PRIMITIVE, G_CC_PRIMITIVE),
-    gsSPEndDisplayList(),
-};
+// Famicom palette (see UI/RetroUI): green rooms, light-green walls, blue doors, Link in yellow
+constexpr Retro::Color kFloor = Retro::GreenDark;
+constexpr Retro::Color kWall = Retro::GreenLight;
+constexpr Retro::Color kDoor = Retro::Blue;
+constexpr Retro::Color kPlayer = Retro::Yellow;
 
 } // namespace
 
 // Outside the anonymous namespace: OPEN_DISPS declares FrameInterpolation helpers at block scope, which must
 // resolve to the global extern "C" functions.
-static void DrawMap(PlayState* play) {
+void Automap_Draw(PlayState* play) {
     Player* player = GET_PLAYER(play);
     auto sceneIt = sMaps.find(play->sceneNum);
     CellKey here = KeyFor(player->actor.world.pos);
@@ -142,23 +126,17 @@ static void DrawMap(PlayState* play) {
         x0 = SCREEN_WIDTH / 2 - sizePx / 2;
         y0 = SCREEN_HEIGHT / 2 - sizePx / 2;
     } else {
-        x0 = OTRGetRectDimensionFromRightEdge((f32)(SCREEN_WIDTH - 22 - sizePx));
-        y0 = SCREEN_HEIGHT - 26 - sizePx;
+        // top right, under the moon window
+        x0 = OTRGetRectDimensionFromRightEdge((f32)(SCREEN_WIDTH - 14 - sizePx));
+        y0 = 50;
     }
 
     OPEN_DISPS(play->state.gfxCtx);
+    Retro::Painter p(&OVERLAY_DISP);
+    auto rect = [&](s32 x, s32 y, s32 w, s32 h, Retro::Color c) { p.Rect(x, y, w, h, c); };
 
-    auto rect = [&](s32 x, s32 y, s32 w, s32 h, Color c) {
-        gDPPipeSync(OVERLAY_DISP++);
-        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, c.r, c.g, c.b, c.a);
-        gDPFillRectangle(OVERLAY_DISP++, x, y, x + w, y + h);
-    };
-
-    gSPDisplayList(OVERLAY_DISP++, sSetupRectDL);
-
-    // Panel
-    rect(x0 - 2, y0 - 2, sizePx + 4, sizePx + 4, kFrame);
-    rect(x0 - 1, y0 - 1, sizePx + 2, sizePx + 2, kBackground);
+    // Black window with a white rule
+    p.Window(x0 - 4, y0 - 4, sizePx + 8, sizePx + 8);
 
     // Screen up is -Z (north), screen right is +X.
     if (sceneIt != sMaps.end()) {
@@ -179,7 +157,7 @@ static void DrawMap(PlayState* play) {
                     if (!(cell.walls & (1 << d))) {
                         continue;
                     }
-                    Color c = (cell.doors & (1 << d)) ? kDoor : kWall;
+                    Retro::Color c = (cell.doors & (1 << d)) ? kDoor : kWall;
                     switch (d) {
                         case 0:
                             rect(sx, sy + cellPx - 1, cellPx, 1, c);
@@ -218,10 +196,9 @@ static void DrawMap(PlayState* play) {
             break;
     }
 
+    // The encounter gem sits just above the map
     CLOSE_DISPS(play->state.gfxCtx);
-
-    // Encounter danger gem at the map's top-left corner
-    Battle_DrawDangerGem(play, x0 - 2, y0 - 12);
+    Battle_DrawDangerGem(play, x0 - 4, y0 - 14);
 }
 
 namespace {
@@ -232,11 +209,7 @@ void RegisterAutomap() {
     COND_VB_SHOULD(VB_DRAW_MINIMAP, enabled, {
         PlayState* play = va_arg(args, PlayState*);
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
-            if (!Battle_IsActive()) { // battles draw their own interface (VB_DRAW_INTERFACE)
-                DrawMap(play);
-                MoonHud_DrawField(play);
-            }
-            *should = false;
+            *should = false; // the retro field HUD draws the automap instead (UI/FieldHud)
         }
     });
 
@@ -297,6 +270,10 @@ void Automap_Update(PlayState* play, Player* player) {
 
 void Automap_ToggleLarge() {
     sLarge = !sLarge;
+}
+
+bool Automap_IsLarge() {
+    return sLarge;
 }
 
 static RegisterShipInitFunc initFunc(RegisterAutomap, { CVAR_CRAWLER_NAME });

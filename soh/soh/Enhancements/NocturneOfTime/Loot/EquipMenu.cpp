@@ -11,6 +11,7 @@
 #include "Loot.h"
 #include "../Party.h"
 #include "../Battle/BattleData.h"
+#include "../UI/RetroUI.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,7 +36,7 @@ using namespace Nocturne;
 namespace {
 
 constexpr int kStartLevel = 5; // matches the battle scene, used if the menu opens before any battle
-constexpr int kVisibleItems = 6;
+constexpr int kVisibleItems = 5; // equip choices shown at once (matches the status screen)
 
 // Members: pick a member (or the "Items" row below them). Slots/Items: equipment. Use/UseTarget: consumables.
 enum class Page { Closed, Members, Slots, Items, Use, UseTarget };
@@ -335,50 +336,6 @@ void EquipMenu_Update(void* inputPtr) {
 // ---- Drawing --------------------------------------------------------------------------------------------
 // Outside the anonymous namespace: OPEN_DISPS declares helpers at block scope that must resolve globally.
 
-static Gfx sMenuRectDL[] = {
-    gsDPPipeSync(),
-    gsSPClearGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BOTH | G_FOG | G_LIGHTING | G_TEXTURE_GEN |
-                          G_TEXTURE_GEN_LINEAR | G_SHADING_SMOOTH | G_LOD),
-    gsDPSetOtherMode(G_AD_DISABLE | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE | G_TL_TILE |
-                         G_TD_CLAMP | G_TP_NONE | G_CYC_1CYCLE | G_PM_1PRIMITIVE,
-                     G_AC_NONE | G_ZS_PIXEL | G_RM_CLD_SURF | G_RM_CLD_SURF2),
-    gsDPSetCombineMode(G_CC_PRIMITIVE, G_CC_PRIMITIVE),
-    gsSPEndDisplayList(),
-};
-
-static void MenuRect(Gfx** gfx, s32 x, s32 y, s32 w, s32 h, u8 r, u8 g, u8 b, u8 a) {
-    gDPPipeSync((*gfx)++);
-    gDPSetPrimColor((*gfx)++, 0, 0, r, g, b, a);
-    gDPFillRectangle((*gfx)++, x, y, x + w, y + h);
-}
-
-static void MenuPanel(Gfx** gfx, s32 x, s32 y, s32 w, s32 h) {
-    MenuRect(gfx, x - 1, y - 1, w + 2, h + 2, 120, 140, 170, 210);
-    MenuRect(gfx, x, y, w, h, 10, 14, 30, 215);
-}
-
-// Word-wrap into lines of at most `chars` characters.
-static std::vector<std::string> Wrap(const std::string& text, size_t chars) {
-    std::vector<std::string> lines;
-    std::string rest = text;
-    while (!rest.empty()) {
-        size_t cut = rest.size() <= chars ? rest.size() : rest.rfind(' ', chars);
-        if (cut == std::string::npos || cut == 0) {
-            cut = std::min(rest.size(), chars);
-        }
-        lines.push_back(rest.substr(0, cut));
-        rest = cut < rest.size() ? rest.substr(cut + (rest[cut] == ' ' ? 1 : 0)) : "";
-    }
-    return lines;
-}
-
-static std::string Fit(const std::string& s, size_t chars) {
-    if (s.size() <= chars) {
-        return s;
-    }
-    return s.substr(0, chars - 2) + "..";
-}
-
 // Stat lines that differ between two versions of a member, e.g. "Max HP 84 > 94" (up = true if it improves)
 struct Diff {
     std::string text;
@@ -417,116 +374,154 @@ static std::vector<Diff> CompareStats(const Combatant& now, const Combatant& nex
     return out;
 }
 
-// Consumables: the left list stays (members + Items), the right panel lists what the party carries.
+
+// ---- Drawing: the Famicom Megami Tensei status screen (see UI/RetroUI) -----------------------------------
+
+namespace {
+
+std::string Upper(std::string s) {
+    for (char& c : s) {
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 'a' + 'A');
+        }
+    }
+    return s;
+}
+
+Retro::Color RarityRetro(Rarity r) {
+    switch (r) {
+        case Rarity::Uncommon:
+            return Retro::Blue;
+        case Rarity::Rare:
+            return Retro::Violet;
+        case Rarity::Legendary:
+            return Retro::Orange;
+        default:
+            return Retro::White;
+    }
+}
+
+constexpr int kTabsY = 6;
+constexpr int kColDivX = 160; // rule between the lower columns
+constexpr int kLowerY = 106;
+constexpr int kRightX = 168, kRightW = SCREEN_WIDTH - 10 - kRightX;
+constexpr size_t kRightChars = (size_t)kRightW / Retro::kCharW;
+
+// Member tabs plus ITEMS along the top
+void DrawTabs(Retro::Painter& p, int selected) {
+    const std::vector<PartyMember>& members = Party_Members();
+    int x = 14;
+    for (int i = 0; i <= (int)members.size(); i++) {
+        std::string name = i < (int)members.size() ? Upper(members[i].base.name) : "ITEMS";
+        bool sel = i == selected;
+        if (sel) {
+            p.Text(x, kTabsY, "▶", Retro::Yellow);
+        }
+        p.Text(x + 9, kTabsY, name, sel ? Retro::Yellow : Retro::Grey);
+        x += 9 + (int)Retro::Length(name) * Retro::kCharW + 10;
+    }
+}
+
+void Diamond(Retro::Painter& p, int x, int y) {
+    p.Text(x, y, "◆", Retro::Green);
+}
+
+} // namespace
+
+// Consumables: the ITEMS tab. Carried items with counts, the highlighted one's description, then who to give
+// it to (party cards with portraits) and what happened.
 static void DrawItemsView(PlayState* play) {
+    using namespace Retro;
     std::vector<PartyMember>& members = Party_Members();
     std::vector<ConsumableId> owned = OwnedConsumables();
-    const int leftX = 10, leftW = 92;
-    const int memY = 26, memH = ((int)members.size() + 1) * 10 + 4;
-    const int rightX = 108, rightW = SCREEN_WIDTH - 118, rightY = 26, rightH = 178;
-    const size_t rightChars = (size_t)(rightW - 8) / 8;
     int useCursor = owned.empty() ? 0 : std::clamp(sMenu.useCursor, 0, (int)owned.size() - 1);
     bool listActive = sMenu.page == Page::Use || sMenu.page == Page::UseTarget;
 
     OPEN_DISPS(play->state.gfxCtx);
-    Gfx* gfx = OVERLAY_DISP;
-    gSPDisplayList(gfx++, sMenuRectDL);
-    MenuRect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 0, 110);
-    MenuPanel(&gfx, leftX, memY, leftW, memH);
-    MenuPanel(&gfx, rightX, rightY, rightW, rightH);
-    int leftSel = sMenu.page == Page::UseTarget ? sMenu.useTarget : (int)members.size();
-    MenuRect(&gfx, leftX + 1, memY + 2 + leftSel * 10, leftW - 2, 10, 40, 60, 110, 230);
-    if (listActive && !owned.empty()) {
-        MenuRect(&gfx, rightX + 1, rightY + 15 + useCursor * 10, rightW - 2, 10, 40, 60, 110, 230);
-    }
+    Painter p(&OVERLAY_DISP);
+    p.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Black);
+    DrawTabs(p, (int)members.size());
 
-    GfxPrint printer;
-    GfxPrint_Init(&printer);
-    GfxPrint_Open(&printer, gfx);
-    auto text = [&](int x, int y, const std::string& s, u8 r, u8 g, u8 b) {
-        GfxPrint_SetColor(&printer, r, g, b, 255);
-        GfxPrint_SetPosPx(&printer, x, y);
-        GfxPrint_Printf(&printer, "%s", s.c_str());
-    };
+    // Header with the little green boxes, as on the Famicom screen
+    p.Rect(118, 22, 9, 9, GreenLight);
+    p.Rect(120, 24, 5, 5, GreenDark);
+    p.TextCenter(160, 23, "Items", White);
+    p.Rect(193, 22, 9, 9, GreenLight);
+    p.Rect(195, 24, 5, 5, GreenDark);
 
-    text(leftX, 12, "ITEMS", 230, 230, 230);
-    for (int i = 0; i < (int)members.size(); i++) {
-        char line[24];
-        snprintf(line, sizeof(line), "%-6s Lv%d", members[i].base.name.c_str(), members[i].base.level);
-        bool sel = sMenu.page == Page::UseTarget && i == sMenu.useTarget;
-        text(leftX + 3, memY + 3 + i * 10, line, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
-    }
-    bool rowSel = sMenu.page != Page::UseTarget;
-    text(leftX + 3, memY + 3 + (int)members.size() * 10, "Items", rowSel ? 255 : 170, rowSel ? 230 : 200,
-         rowSel ? 90 : 160);
-
-    int y = rightY + 4;
-    text(rightX + 4, y, "Carried", 140, 150, 180);
-    y += 11;
+    // List (left) and description (right), split by a rule
+    p.Rect(kColDivX, 40, 2, 92, White);
+    int y = 42;
     if (owned.empty()) {
-        text(rightX + 4, y, "No items.", 150, 150, 150);
-        y += 10;
+        p.Text(18, y, "No items.", Grey);
     }
     for (int i = 0; i < (int)owned.size(); i++) {
         const ConsumableDef& def = ConsumableOf(owned[i]);
         bool sel = listActive && i == useCursor;
-        u8 shade = def.battleOnly ? 130 : 210; // battle-only items are greyed here
-        text(rightX + 4, y, std::string(sel ? ">" : " ") + def.name, sel ? 255 : shade, sel ? 230 : shade,
-             sel ? 90 : shade);
-        std::string count = "x" + std::to_string(Party_Consumables()[(size_t)def.id]);
-        text(rightX + rightW - 6 - (int)count.size() * 8, y, count, sel ? 255 : shade, sel ? 230 : shade,
-             sel ? 90 : shade);
-        y += 10;
+        Color c = sel ? Yellow : (def.battleOnly ? Grey : White);
+        if (sel) {
+            p.Text(14, y, "▶", Yellow);
+        } else {
+            Diamond(p, 14, y);
+        }
+        p.Text(26, y, Fit(def.name, 13), c);
+        p.TextRight(kColDivX - 6, y, "×" + std::to_string(Party_Consumables()[(size_t)def.id]), c);
+        y += 12;
     }
-    y += 6;
     if (listActive && !owned.empty()) {
         const ConsumableDef& def = ConsumableOf(owned[useCursor]);
-        for (const std::string& l : Wrap(def.description, rightChars)) {
-            text(rightX + 4, y, l, 170, 200, 160);
-            y += 9;
+        int dy = 42;
+        p.Text(kRightX, dy, Fit(Upper(def.name), kRightChars), Green);
+        dy += 14;
+        for (const std::string& l : Wrap(def.description, kRightChars)) {
+            p.Text(kRightX, dy, l, White);
+            dy += kLineH;
         }
-        if (def.battleOnly) {
-            text(rightX + 4, y, "Battle only", 150, 150, 170);
-            y += 9;
-        }
-        y += 5;
+        dy += 4;
+        p.Text(kRightX, dy, def.battleOnly ? "BATTLE ONLY" : (def.effect.target == TargetType::AllAllies ? "PARTY" : "ONE ALLY"),
+               Grey);
+    } else {
+        p.Text(kRightX, 42, "A:CHOOSE", Grey);
     }
-    // Party status, so the effect of an item can be seen
-    for (const PartyMember& pm : members) {
-        Combatant e = Party_Effective(pm);
-        char line[48];
-        snprintf(line, sizeof(line), "%-6s HP %d/%d", e.name.c_str(), e.hp, e.maxHp);
-        text(rightX + 4, y, line, 200, 220, 200);
-        snprintf(line, sizeof(line), "       MP %d/%d", e.mp, e.maxMp);
-        text(rightX + 4, y + 9, line, 200, 220, 200);
-        if (e.ailment != Ailment::None) {
-            text(rightX + 4 + (int)strlen(line) * 8 + 8, y + 9, AilmentName(e.ailment), 200, 130, 255);
-        }
-        y += 20;
+
+    // Party: who gets it
+    p.Rect(10, 138, SCREEN_WIDTH - 20, 2, White);
+    p.Text(14, 146, sMenu.page == Page::UseTarget ? "USE ON WHOM?" : "PARTY", Green);
+    const int cardW = 148, cardH = 38;
+    for (int i = 0; i < (int)members.size() && i < 2; i++) {
+        Combatant c = Party_Effective(members[i]);
+        int x = 10 + i * (cardW + 4), cy = 158;
+        bool sel = sMenu.page == Page::UseTarget && i == sMenu.useTarget;
+        p.Window(x, cy, cardW, cardH, sel ? Yellow : White);
+        p.Portrait(c.name, x + 5, cy + 5, 28);
+        p.Text(x + 38, cy + 5, (sel ? "▶" : "") + Upper(c.name), sel ? Yellow : White);
+        const char* cond = c.ailment == Ailment::Poison ? "PSN" : (c.ailment == Ailment::Burn ? "BRN" : "GOOD");
+        p.TextRight(x + cardW - 5, cy + 5, cond,
+                    c.ailment == Ailment::Poison ? Violet : (c.ailment == Ailment::Burn ? Orange : Green));
+        char line[32];
+        snprintf(line, sizeof(line), "HP %d/%d", c.hp, c.maxHp);
+        p.Text(x + 38, cy + 15, line, c.hp * 4 <= c.maxHp ? Red : White);
+        snprintf(line, sizeof(line), "MP %d/%d", c.mp, c.maxMp);
+        p.Text(x + 38, cy + 25, line, White);
     }
+
     if (!sMenu.note.empty()) {
-        y += 4;
-        for (const std::string& l : Wrap(sMenu.note, rightChars)) {
-            if (y > rightY + rightH - 10) {
-                break;
-            }
-            text(rightX + 4, y, l, 255, 230, 140);
-            y += 9;
+        p.Text(14, 202, "▶", Green);
+        std::vector<std::string> lines = Wrap(sMenu.note, 36);
+        for (size_t i = 0; i < lines.size() && i < 2; i++) {
+            p.Text(26, 202 + (int)i * kLineH, lines[i], Cream);
         }
     }
 
-    const char* hint = sMenu.page == Page::Members  ? "A: Choose  B/R: Close"
-                       : sMenu.page == Page::Use     ? "A: Use  B: Back"
-                                                     : "A: Give  B: Back";
-    text(leftX, SCREEN_HEIGHT - 26, hint, 150, 150, 170);
-
-    gfx = GfxPrint_Close(&printer);
-    GfxPrint_Destroy(&printer);
-    OVERLAY_DISP = gfx;
+    const char* hint = sMenu.page == Page::Members ? "A:CHOOSE  B:CLOSE"
+                       : sMenu.page == Page::Use     ? "A:USE  B:BACK"
+                                                     : "A:GIVE  B:BACK";
+    p.Text(14, 226, hint, Grey);
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
 void EquipMenu_Draw(PlayState* play) {
+    using namespace Retro;
     if (sMenu.page == Page::Closed) {
         return;
     }
@@ -541,63 +536,92 @@ void EquipMenu_Draw(PlayState* play) {
     sMenu.member = std::clamp(sMenu.member, 0, (int)members.size() - 1);
     const PartyMember& m = members[sMenu.member];
     Combatant eff = Party_Effective(m);
-
-    const int leftX = 10, leftW = 92;
-    const int memY = 26, memH = ((int)members.size() + 1) * 10 + 4; // + the Items row
-    const int slotY = memY + memH + 8, slotH = (int)Slot::Count * 10 + 4;
-    const int rightX = 108, rightW = SCREEN_WIDTH - 118, rightY = 26, rightH = 178;
-    const size_t rightChars = (size_t)(rightW - 8) / 8;
-
     std::vector<int> choices = sMenu.page == Page::Items ? Choices() : std::vector<int>();
 
     OPEN_DISPS(play->state.gfxCtx);
-    Gfx* gfx = OVERLAY_DISP;
-    gSPDisplayList(gfx++, sMenuRectDL);
+    Painter p(&OVERLAY_DISP);
+    p.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Black);
+    DrawTabs(p, sMenu.member);
 
-    MenuRect(&gfx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 0, 0, 110); // dim the dungeon behind
-    MenuPanel(&gfx, leftX, memY, leftW, memH);
-    MenuPanel(&gfx, leftX, slotY, leftW, slotH);
-    MenuPanel(&gfx, rightX, rightY, rightW, rightH);
-    if (sMenu.page == Page::Members) {
-        MenuRect(&gfx, leftX + 1, memY + 2 + sMenu.member * 10, leftW - 2, 10, 40, 60, 110, 230);
-    } else {
-        MenuRect(&gfx, leftX + 1, slotY + 2 + sMenu.slot * 10, leftW - 2, 10, 40, 60, 110, 230);
+    // ---- Portrait in a white frame, name and level, stats on bars
+    p.Rect(14, 18, 68, 68, White);
+    p.Rect(16, 20, 64, 64, Black);
+    p.Portrait(m.base.name, 16, 20, 64);
+    p.Text(92, 20, "✻" + Upper(m.base.name) + "✻", White);
+    p.TextRight(SCREEN_WIDTH - 12, 20, "Level " + std::to_string(m.base.level), White);
+    const char* labels[] = { "STR", "MAG", "VIT", "AGI", "LUK" };
+    for (int i = 0; i < (int)Stat::Count; i++) {
+        int y = 34 + i * 10;
+        int value = GetStat(eff, (Stat)i);
+        p.Text(92, y, "○", White);
+        p.Text(102, y, labels[i], White);
+        p.TextRight(150, y, std::to_string(value), White);
+        p.Bar(156, y, 20, std::min(20, value / 2), 6, 7, 1, GreenLight, GreenDark); // 2 points a block
     }
 
-    // EXP bar, drawn after the text once its row is known
-    int expBarX = -1, expBarY = 0;
-    float expFill = 0.0f;
-    const int expBarW = 80, expBarH = 5;
-
-    GfxPrint printer;
-    GfxPrint_Init(&printer);
-    GfxPrint_Open(&printer, gfx);
-    auto text = [&](int x, int y, const std::string& s, u8 r, u8 g, u8 b) {
-        GfxPrint_SetColor(&printer, r, g, b, 255);
-        GfxPrint_SetPosPx(&printer, x, y);
-        GfxPrint_Printf(&printer, "%s", s.c_str());
-    };
-    auto rarityText = [&](int x, int y, const Item& item, size_t chars) {
-        Rgb c = RarityColor(item.rarity);
-        text(x, y, Fit(item.name, chars), c.r, c.g, c.b);
-    };
-
-    text(leftX, 12, "EQUIPMENT", 230, 230, 230);
-    text(rightX, 12, std::string("Bag: ") + std::to_string(Party_Bag().size()) + " items", 150, 150, 170);
-
-    for (int i = 0; i < (int)members.size(); i++) {
-        char line[24];
-        snprintf(line, sizeof(line), "%-6s Lv%d", members[i].base.name.c_str(), members[i].base.level);
-        bool sel = i == sMenu.member;
-        text(leftX + 3, memY + 3 + i * 10, line, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
+    // ---- EXP and points to the next level
+    {
+        int y = 92;
+        int lvStart = XpForLevel(m.base.level), lvNext = XpForLevel(m.base.level + 1);
+        Diamond(p, 34, y);
+        p.Text(46, y, "EXP", White);
+        p.TextRight(146, y, std::to_string(m.xp) + "Pts.", White);
+        if (lvNext > lvStart) {
+            int fill = std::clamp((m.xp - lvStart) * 10 / std::max(1, lvNext - lvStart), 0, 10);
+            p.Bar(156, y, 10, fill, 6, 7, 1, Yellow, GreenDark);
+            p.Text(230, y, "NEXT", Green);
+            p.TextRight(SCREEN_WIDTH - 12, y, std::to_string(std::max(0, lvNext - m.xp)), White);
+        } else {
+            p.Text(230, y, "MAX", Green);
+        }
     }
-    text(leftX + 3, memY + 3 + (int)members.size() * 10, "Items", 170, 200, 160);
+
+    // ---- Lower left: equipment (the slot cursor on the equip pages), HP, MP, rupees
+    p.Rect(kColDivX, kLowerY, 2, 116, White);
     for (int i = 0; i < (int)Slot::Count; i++) {
+        int y = kLowerY + 2 + i * 13;
         bool sel = sMenu.page != Page::Members && i == sMenu.slot;
-        text(leftX + 3, slotY + 3 + i * 10, kSlotLabels[i], sel ? 255 : 200, sel ? 230 : 200, sel ? 90 : 200);
+        if (sel) {
+            p.Text(14, y, "▶", Yellow);
+        } else {
+            Diamond(p, 14, y);
+        }
+        if (m.gear[i]) {
+            p.Text(26, y, Fit(m.gear[i]->name, 16), sel ? Yellow : RarityRetro(m.gear[i]->rarity));
+        } else {
+            p.Text(26, y, std::string(kSlotLabels[i]) + ": ----", sel ? Yellow : Grey);
+        }
+    }
+    {
+        int y = kLowerY + 46;
+        char line[32];
+        Diamond(p, 14, y);
+        p.Text(26, y, "HP", White);
+        snprintf(line, sizeof(line), "%d/%d", eff.hp, eff.maxHp);
+        p.TextRight(kColDivX - 6, y, line, eff.hp * 4 <= eff.maxHp ? Red : White);
+        y += 13;
+        Diamond(p, 14, y);
+        p.Text(26, y, "MP", White);
+        snprintf(line, sizeof(line), "%d/%d", eff.mp, eff.maxMp);
+        p.TextRight(kColDivX - 6, y, line, White);
+        y += 13;
+        Diamond(p, 14, y);
+        p.Text(26, y, "ATK", White);
+        p.TextRight(88, y, "+" + std::to_string(eff.weaponPower), White);
+        p.Text(96, y, "MAG", White);
+        p.TextRight(kColDivX - 6, y, "+" + std::to_string(eff.magicPower), White);
+        y += 13;
+        Diamond(p, 14, y);
+        p.Text(26, y, "Rupees", White);
+        p.TextRight(kColDivX - 6, y, std::to_string(gSaveContext.rupees), White);
+        if (eff.ailment != Ailment::None) {
+            y += 13;
+            p.Text(26, y, eff.ailment == Ailment::Poison ? "POISONED" : "BURNED",
+                   eff.ailment == Ailment::Poison ? Violet : Orange);
+        }
     }
 
-    // The item the right panel is about: the equipped one on the slot page, the highlighted one in the list
+    // ---- Lower right: depends on the page
     const Item* focus = nullptr;
     if (sMenu.page == Page::Slots && m.gear[sMenu.slot]) {
         focus = &*m.gear[sMenu.slot];
@@ -607,216 +631,142 @@ void EquipMenu_Draw(PlayState* play) {
             focus = &Party_Bag()[pick];
         }
     }
-
-    int y = rightY + 4;
+    const int bottom = 220;
+    int y = kLowerY + 2;
     if (sMenu.showLore && sMenu.page != Page::Members) {
-        // Lore view: name, rarity, description, then the item's story
+        // Lore view: name, rarity, description and the item's story
         if (focus == nullptr) {
-            text(rightX + 4, y, "Nothing selected.", 150, 150, 150);
+            p.Text(kRightX, y, "Nothing here.", Grey);
         } else {
-            Rgb c = RarityColor(focus->rarity);
-            for (const std::string& l : Wrap(focus->name, rightChars)) {
-                text(rightX + 4, y, l, c.r, c.g, c.b);
-                y += 9;
+            for (const std::string& l : Wrap(focus->name, kRightChars)) {
+                p.Text(kRightX, y, l, RarityRetro(focus->rarity));
+                y += kLineH;
             }
-            text(rightX + 4, y, std::string(RarityName(focus->rarity)) + " " + SlotName(BaseOf(*focus).slot), 150,
-                 150, 170);
+            p.Text(kRightX, y, Upper(RarityName(focus->rarity)), Grey);
             y += 14;
             std::string lore = ItemLore(*focus);
-            std::string desc = ItemDescription(*focus);
-            if (lore != desc) {
-                for (const std::string& l : Wrap(desc, rightChars)) {
-                    text(rightX + 4, y, l, 170, 200, 160);
-                    y += 9;
-                }
-                y += 5;
-            }
-            for (const std::string& l : Wrap(lore, rightChars)) {
-                if (y > rightY + rightH - 20) {
+            for (const std::string& l : Wrap(lore, kRightChars)) {
+                if (y > bottom - kLineH) {
                     break;
                 }
-                text(rightX + 4, y, l, 225, 220, 205);
-                y += 9;
+                p.Text(kRightX, y, l, Cream);
+                y += kLineH;
             }
-            if (!BaseOf(*focus).effectText.empty()) {
-                y += 5;
-                for (const std::string& l : Wrap(BaseOf(*focus).effectText, rightChars)) {
-                    text(rightX + 4, y, l, 255, 170, 80);
-                    y += 9;
+            if (!BaseOf(*focus).effectText.empty() && y <= bottom - kLineH) {
+                y += 4;
+                for (const std::string& l : Wrap(BaseOf(*focus).effectText, kRightChars)) {
+                    if (y > bottom - kLineH) {
+                        break;
+                    }
+                    p.Text(kRightX, y, l, Orange);
+                    y += kLineH;
                 }
             }
         }
-    } else if (sMenu.page != Page::Items) {
-        // Equipped gear, then the member's stats
-        for (int i = 0; i < (int)Slot::Count; i++) {
-            text(rightX + 4, y, std::string(kSlotLabels[i]), 140, 150, 180);
-            if (m.gear[i]) {
-                rarityText(rightX + 4 + 7 * 8, y, *m.gear[i], rightChars - 7);
-            } else {
-                text(rightX + 4 + 7 * 8, y, "-", 110, 110, 110);
+    } else if (sMenu.page == Page::Members) {
+        // The Famicom screen's Items list: what the party carries
+        p.Rect(kRightX + 20, y, 9, 9, GreenLight);
+        p.Rect(kRightX + 22, y + 2, 5, 5, GreenDark);
+        p.TextCenter(kRightX + kRightW / 2, y + 1, "Items", White);
+        p.Rect(kRightX + kRightW - 29, y, 9, 9, GreenLight);
+        p.Rect(kRightX + kRightW - 27, y + 2, 5, 5, GreenDark);
+        y += 15;
+        std::vector<ConsumableId> owned = OwnedConsumables();
+        if (owned.empty()) {
+            p.Text(kRightX, y, "None", Grey);
+        }
+        for (ConsumableId id : owned) {
+            if (y > bottom - kLineH) {
+                break;
             }
-            y += 10;
+            p.Text(kRightX, y, Fit(ConsumableOf(id).name, 13), White);
+            p.TextRight(kRightX + kRightW, y, "×" + std::to_string(Party_Consumables()[(size_t)id]), White);
+            y += kLineH;
         }
-        y += 6;
-        char line[48];
-        snprintf(line, sizeof(line), "HP %d/%d  MP %d/%d", eff.hp, eff.maxHp, eff.mp, eff.maxMp);
-        text(rightX + 4, y, line, 200, 220, 200);
-        if (eff.ailment != Ailment::None) {
-            text(rightX + 4 + (int)strlen(line) * 8 + 8, y, AilmentTag(eff.ailment), 200, 130, 255);
-        }
-        y += 10;
-        snprintf(line, sizeof(line), "St %d  Ma %d  Vi %d", eff.st, eff.ma, eff.vi);
-        text(rightX + 4, y, line, 220, 220, 220);
-        y += 10;
-        snprintf(line, sizeof(line), "Ag %d  Lu %d", eff.ag, eff.lu);
-        text(rightX + 4, y, line, 220, 220, 220);
-        y += 10;
-        snprintf(line, sizeof(line), "Attack +%d  Magic +%d", eff.weaponPower, eff.magicPower);
-        text(rightX + 4, y, line, 220, 220, 220);
-        y += 10;
-        // EXP toward the next level
-        text(rightX + 4, y, "EXP", 140, 150, 180);
-        int lvStart = XpForLevel(m.base.level), lvNext = XpForLevel(m.base.level + 1);
-        if (lvNext > lvStart) {
-            expFill = std::clamp((float)(m.xp - lvStart) / (float)(lvNext - lvStart), 0.0f, 1.0f);
-            snprintf(line, sizeof(line), "Next %d", std::max(0, lvNext - m.xp));
+        char bag[32];
+        snprintf(bag, sizeof(bag), "Gear bag: %d", (int)Party_Bag().size());
+        p.Text(kRightX, bottom - 8, bag, Grey);
+    } else if (sMenu.page == Page::Slots) {
+        // The equipped item in detail
+        if (focus == nullptr) {
+            p.Text(kRightX, y, "Nothing equipped.", Grey);
         } else {
-            expFill = 1.0f;
-            snprintf(line, sizeof(line), "Max");
-        }
-        expBarX = rightX + 4 + 4 * 8;
-        expBarY = y + 2;
-        text(expBarX + expBarW + 6, y, line, 200, 200, 210);
-        y += 10;
-        if (eff.critBonus > 0 || eff.healBonus > 0) {
-            snprintf(line, sizeof(line), "Crit +%d%%  Heal +%d%%", (int)std::lround(eff.critBonus * 100),
-                     (int)std::lround(eff.healBonus * 100));
-            text(rightX + 4, y, line, 220, 220, 220);
-            y += 10;
-        }
-        // Selected slot's item in detail
-        if (sMenu.page == Page::Slots && m.gear[sMenu.slot]) {
-            y += 6;
-            const Item& item = *m.gear[sMenu.slot];
-            Rgb c = RarityColor(item.rarity);
-            text(rightX + 4, y, std::string(RarityName(item.rarity)) + " " + SlotName(BaseOf(item).slot), c.r, c.g,
-                 c.b);
-            y += 10;
-            for (const std::string& l : DescribeItem(item)) {
-                if (y > rightY + rightH - 10) {
-                    break;
-                }
-                text(rightX + 8, y, l, 200, 200, 210);
-                y += 9;
+            for (const std::string& l : Wrap(focus->name, kRightChars)) {
+                p.Text(kRightX, y, l, RarityRetro(focus->rarity));
+                y += kLineH;
             }
-            y += 4;
-            for (const std::string& l : Wrap(ItemDescription(item), rightChars)) {
-                if (y > rightY + rightH - 10) {
+            p.Text(kRightX, y, Upper(std::string(RarityName(focus->rarity)) + " " + SlotName(BaseOf(*focus).slot)),
+                   Grey);
+            y += 13;
+            for (const std::string& l : DescribeItem(*focus)) {
+                if (y > bottom - kLineH) {
                     break;
                 }
-                text(rightX + 4, y, l, 170, 200, 160);
-                y += 9;
+                p.Text(kRightX, y, Fit(l, kRightChars), White);
+                y += kLineH;
+            }
+            y += 3;
+            for (const std::string& l : Wrap(ItemDescription(*focus), kRightChars)) {
+                if (y > bottom - kLineH) {
+                    break;
+                }
+                p.Text(kRightX, y, l, Green);
+                y += kLineH;
             }
         }
     } else {
-        // Item list for the slot
+        // Choosing gear for the slot: the list, then what changes
         if (choices.empty()) {
-            text(rightX + 4, y, "Nothing to equip here.", 150, 150, 150);
+            p.Text(kRightX, y, "Nothing fits.", Grey);
         }
-        for (int row = 0; row < kVisibleItems; row++) {
+        const int visible = 5;
+        for (int row = 0; row < visible; row++) {
             int i = sMenu.itemScroll + row;
             if (i >= (int)choices.size()) {
                 break;
             }
             bool sel = i == sMenu.itemCursor;
-            text(rightX + 2, y, sel ? ">" : " ", 255, 230, 90);
-            if (choices[i] < 0) {
-                text(rightX + 10, y, "(Remove)", 200, 200, 200);
-            } else {
-                rarityText(rightX + 10, y, Party_Bag()[choices[i]], rightChars - 1);
+            if (sel) {
+                p.Text(kRightX - 2, y, "▶", Yellow);
             }
-            y += 10;
+            if (choices[i] < 0) {
+                p.Text(kRightX + 8, y, "(Remove)", sel ? Yellow : White);
+            } else {
+                const Item& it = Party_Bag()[choices[i]];
+                p.Text(kRightX + 8, y, Fit(it.name, kRightChars - 1), RarityRetro(it.rarity));
+            }
+            y += kLineH;
         }
-        if ((int)choices.size() > kVisibleItems) {
-            char more[24];
+        if ((int)choices.size() > visible) {
+            char more[16];
             snprintf(more, sizeof(more), "%d/%d", sMenu.itemCursor + 1, (int)choices.size());
-            text(rightX + rightW - (int)strlen(more) * 8 - 4, rightY + 4 + kVisibleItems * 10, more, 140, 140, 160);
+            p.TextRight(kRightX + kRightW, kLowerY + 2 + visible * kLineH, more, Grey);
         }
-
-        // Details of the highlighted choice, and how the member's stats would change
         if (!choices.empty()) {
-            y = rightY + 4 + kVisibleItems * 10 + 8;
+            y = kLowerY + 2 + visible * kLineH + 12;
             int pick = choices[std::clamp(sMenu.itemCursor, 0, (int)choices.size() - 1)];
             PartyMember next = m;
             if (pick < 0) {
                 next.gear[sMenu.slot].reset();
             } else {
-                const Item& item = Party_Bag()[pick];
-                next.gear[sMenu.slot] = item;
-                Rgb c = RarityColor(item.rarity);
-                // Full name here (wrapped), since the list above may have shortened it
-                std::string name = item.name;
-                for (int line = 0; line < 2 && !name.empty(); line++) {
-                    size_t cut = name.size() <= rightChars ? name.size() : name.rfind(' ', rightChars);
-                    if (cut == std::string::npos || cut == 0) {
-                        cut = std::min(name.size(), rightChars);
-                    }
-                    text(rightX + 4, y, name.substr(0, cut), c.r, c.g, c.b);
-                    name = cut < name.size() ? name.substr(cut + 1) : "";
-                    y += 9;
-                }
-                for (const std::string& l : Wrap(ItemDescription(item), rightChars)) {
-                    text(rightX + 4, y, l, 170, 200, 160);
-                    y += 9;
-                }
-                std::string mods;
-                for (const std::string& l : DescribeItem(item)) {
-                    mods += (mods.empty() ? "" : ", ") + l;
-                }
-                // wrap the stat summary
-                while (!mods.empty() && y < rightY + rightH - 46) {
-                    size_t cut = mods.size() <= rightChars ? mods.size() : mods.rfind(' ', rightChars);
-                    if (cut == std::string::npos || cut == 0) {
-                        cut = std::min(mods.size(), rightChars);
-                    }
-                    text(rightX + 4, y, mods.substr(0, cut), 190, 190, 200);
-                    mods = cut < mods.size() ? mods.substr(cut + 1) : "";
-                    y += 9;
-                }
-                if (!BaseOf(item).effectText.empty() && y < rightY + rightH - 40) {
-                    text(rightX + 4, y, Fit(BaseOf(item).effectText, rightChars), 255, 170, 80);
-                    y += 9;
-                }
+                next.gear[sMenu.slot] = Party_Bag()[pick];
             }
-            y += 3;
             for (const Diff& d : CompareStats(eff, Party_Effective(next))) {
-                if (y > rightY + rightH - 10) {
+                if (y > bottom - kLineH) {
                     break;
                 }
-                text(rightX + 4, y, Fit(d.text, rightChars), d.up ? 110 : 255, d.up ? 230 : 110, d.up ? 120 : 110);
-                y += 9;
+                p.Text(kRightX, y, Fit(d.text, kRightChars), d.up ? Green : Red);
+                y += kLineH;
             }
         }
     }
 
-    const char* hint = sMenu.page == Page::Members ? "A: Choose  B/R: Close"
-                       : sMenu.page == Page::Slots ? (sMenu.showLore ? "A: Change  B: Back  Z: Stats"
-                                                                     : "A: Change  B: Back  Z: Lore")
-                                                   : (sMenu.showLore ? "A: Equip  B: Back  Z: Stats"
-                                                                     : "A: Equip  B: Back  Z: Lore");
-    text(leftX, SCREEN_HEIGHT - 26, hint, 150, 150, 170);
-
-    gfx = GfxPrint_Close(&printer);
-    if (expBarX >= 0) {
-        gSPDisplayList(gfx++, sMenuRectDL);
-        MenuRect(&gfx, expBarX, expBarY, expBarW, expBarH, 40, 40, 50, 230);
-        int fill = (int)(expBarW * expFill);
-        if (fill > 0) {
-            MenuRect(&gfx, expBarX, expBarY, fill, expBarH, 240, 200, 70, 255);
-        }
-    }
-    GfxPrint_Destroy(&printer);
-    OVERLAY_DISP = gfx;
+    const char* hint = sMenu.page == Page::Members ? "A:EQUIP  B:CLOSE"
+                       : sMenu.page == Page::Slots ? (sMenu.showLore ? "A:CHANGE B:BACK Z:STATS"
+                                                                     : "A:CHANGE B:BACK Z:LORE")
+                                                   : (sMenu.showLore ? "A:EQUIP B:BACK Z:STATS"
+                                                                     : "A:EQUIP B:BACK Z:LORE");
+    p.Text(14, 226, hint, Grey);
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
