@@ -56,7 +56,7 @@ constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 
-enum class Ui { None, Intro, Command, Skills, TargetEnemy, TargetAlly, Messages, Ending };
+enum class Ui { None, Intro, Command, Skills, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
 
 enum Command { CMD_ATTACK, CMD_SKILL, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_RUN, CMD_COUNT };
 const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Guard", "Pass", "Analyze", "Run" };
@@ -87,6 +87,8 @@ struct Scene {
     int damageFlash = 0;
     int impactFlash = 0;   // white flash for weaknesses and criticals
     bool showSkillInfo = false; // Z in the skill list
+    int statMember = -1;        // party member placing level-up points
+    int statCursor = 0;
 };
 
 Scene sScene;
@@ -234,14 +236,49 @@ void StartBattle(PlayState* play, Player* player) {
     for (const Combatant& e : enemies) {
         rowWidth += widthOf(e.kind);
     }
+    // Fit the row between the walls: measure the open space to each side of the row's centre and squeeze /
+    // shift the row so every enemy stands on open floor
+    const Vec3f& origin = player->actor.world.pos;
+    Vec3f centre = { origin.x + fwd.x * dist, origin.y, origin.z + fwd.z * dist };
+    const f32 kWallMargin = 24.0f;
+    f32 freeRight = std::max(0.0f, FreeDistance(play, centre, (s16)(yaw - 0x4000), 220.0f) - kWallMargin);
+    f32 freeLeft = std::max(0.0f, FreeDistance(play, centre, (s16)(yaw + 0x4000), 220.0f) - kWallMargin);
+    f32 squeeze = 1.0f;
+    f32 room = freeLeft + freeRight;
+    if (rowWidth > room && rowWidth > 0.0f) {
+        squeeze = std::max(0.45f, room / rowWidth); // crowd them together rather than into the wall
+    }
+    f32 half = rowWidth * squeeze * 0.5f;
+    // offset of the row centre along `right` so its edges stay within [-freeLeft, freeRight]
+    f32 shift = (half * 2.0f <= room) ? CLAMP(0.0f, half - freeLeft, freeRight - half) : (freeRight - freeLeft) * 0.5f;
+
     sScene.enemyActors.clear();
     f32 cursor = -rowWidth * 0.5f;
     for (size_t i = 0; i < enemies.size(); i++) {
         f32 w = widthOf(enemies[i].kind);
-        f32 lateral = cursor + w * 0.5f;
+        f32 lateral = (cursor + w * 0.5f) * squeeze + shift;
         cursor += w + kEnemyGap;
-        Vec3f pos = { player->actor.world.pos.x + fwd.x * dist + right.x * lateral, player->actor.world.pos.y,
-                      player->actor.world.pos.z + fwd.z * dist + right.z * lateral };
+        Vec3f pos = { centre.x + right.x * lateral, origin.y, centre.z + right.z * lateral };
+
+        // Last check: a straight line from Link to the enemy must be clear, else pull the enemy in front of
+        // whatever is in the way (tapering rooms, pillars)
+        {
+            Vec3f eyeA = { origin.x, origin.y + 30.0f, origin.z };
+            Vec3f eyeB = { pos.x, origin.y + 30.0f, pos.z };
+            Vec3f hit;
+            CollisionPoly* hitPoly;
+            s32 hitBg;
+            if (BgCheck_EntityLineTest1(&play->colCtx, &eyeA, &eyeB, &hit, &hitPoly, true, false, false, true,
+                                        &hitBg)) {
+                f32 dx = hit.x - origin.x, dz = hit.z - origin.z;
+                f32 len = sqrtf(dx * dx + dz * dz);
+                f32 keep = std::max(0.0f, len - kWallMargin);
+                if (len > 0.001f) {
+                    pos.x = origin.x + dx / len * keep;
+                    pos.z = origin.z + dz / len * keep;
+                }
+            }
+        }
         Vec3f probe = { pos.x, pos.y + 50.0f, pos.z };
         CollisionPoly* poly;
         s32 bgId;
@@ -333,16 +370,24 @@ void QueueRewards() {
         }
         m.xp += xp;
         while (m.xp >= XpForLevel(m.base.level + 1)) {
-            int oldMaxHp = m.base.maxHp, oldMaxMp = m.base.maxMp;
-            if (!LevelUp(m.base)) {
+            LevelGains gains = LevelUp(m.base, [] { return Rand_ZeroOne() * 0.99999f; });
+            if (!gains.leveled) {
                 break;
             }
             // Level-ups add the gained max HP/MP to current HP/MP
-            m.base.hp += m.base.maxHp - oldMaxHp;
-            m.base.mp += m.base.maxMp - oldMaxMp;
+            m.base.hp += gains.hp;
+            m.base.mp += gains.mp;
+            m.unspentStatPoints += kManualStatPoints;
+            std::string grew;
+            for (size_t st = 0; st < gains.stats.size(); st++) {
+                if (gains.stats[st] > 0) {
+                    grew += std::string(grew.empty() ? "" : " ") + StatName((Stat)st) + "+" +
+                            std::to_string(gains.stats[st]);
+                }
+            }
             BattleEvent lv;
             lv.type = BattleEvent::Type::Message;
-            lv.text = m.base.name + " reached level " + std::to_string(m.base.level) + "!";
+            lv.text = m.base.name + " reached level " + std::to_string(m.base.level) + "!\n" + grew;
             lv.hold = true;
             sScene.queue.push_back(lv);
         }
@@ -357,7 +402,7 @@ void QueueRewards() {
     LootRng rng = [] { return Rand_ZeroOne() * 0.99999f; };
     for (size_t i = 0; i < b.Enemies().size() && drops < kMaxDrops; i++) {
         if (Rand_ZeroOne() < kDropChance) {
-            Item item = RollItem(itemLevel, kLootLuck, rng);
+            Item item = RollItem(itemLevel, DropSource::Common, kLootLuck, rng); // only common enemies so far
             Party_Bag().push_back(item);
             drops++;
             BattleEvent found;
@@ -478,6 +523,16 @@ bool NextMessage() {
     return false;
 }
 
+int NextMemberWithPoints() {
+    std::vector<PartyMember>& members = Party_Members();
+    for (int i = 0; i < (int)members.size(); i++) {
+        if (members[i].unspentStatPoints > 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // After messages: decide what the battle does next.
 void Proceed() {
     Battle& b = *sScene.battle;
@@ -496,6 +551,11 @@ void Proceed() {
                 sScene.rewardsGiven = true;
                 QueueRewards();
                 sScene.ui = Ui::Messages;
+            } else if (NextMemberWithPoints() >= 0) {
+                sScene.statMember = NextMemberWithPoints();
+                sScene.statCursor = 0;
+                sScene.showingMessage = false;
+                sScene.ui = Ui::StatPoints;
             } else {
                 sScene.ui = Ui::Ending;
             }
@@ -592,7 +652,7 @@ void ChooseSkill(int skill) {
 
 void HandleInput(const Buttons& in) {
     Battle& b = *sScene.battle;
-    const Combatant& member = b.Party()[b.ActivePartyMember()];
+    const Combatant& member = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
 
     switch (sScene.ui) {
         case Ui::Command:
@@ -672,6 +732,34 @@ void HandleInput(const Buttons& in) {
                 PlaySfx(NA_SE_SY_CANCEL);
                 bool fromSkills = sScene.pendingSkill > 0;
                 sScene.ui = fromSkills ? Ui::Skills : Ui::Command;
+            }
+            break;
+        }
+
+        case Ui::StatPoints: {
+            std::vector<PartyMember>& members = Party_Members();
+            if (sScene.statMember < 0 || sScene.statMember >= (int)members.size()) {
+                sScene.ui = Ui::Ending;
+                break;
+            }
+            const int count = (int)Stat::Count;
+            if (in.up || in.down) {
+                sScene.statCursor = (sScene.statCursor + (in.up ? count - 1 : 1)) % count;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else if (in.a) {
+                PartyMember& m = members[sScene.statMember];
+                AddStat(m.base, (Stat)sScene.statCursor, 1);
+                m.unspentStatPoints--;
+                PlaySfx(NA_SE_SY_DECIDE);
+                if (m.unspentStatPoints <= 0) {
+                    int next = NextMemberWithPoints();
+                    if (next >= 0) {
+                        sScene.statMember = next;
+                        sScene.statCursor = 0;
+                    } else {
+                        sScene.ui = Ui::Ending;
+                    }
+                }
             }
             break;
         }
@@ -958,6 +1046,15 @@ void Battle_DrawUi(PlayState* play) {
         Panel(&gfx, listX, infoY, listW, infoH);
     }
 
+    // Level-up points: a centred panel listing the stats
+    const int ptsX = 90, ptsY = 66, ptsW = SCREEN_WIDTH - 180, ptsH = 82;
+    bool pointsUi = sScene.ui == Ui::StatPoints && sScene.statMember >= 0 &&
+                    sScene.statMember < (int)Party_Members().size();
+    if (pointsUi) {
+        Panel(&gfx, ptsX, ptsY, ptsW, ptsH);
+        Rect(&gfx, ptsX + 1, ptsY + 23 + sScene.statCursor * 10, ptsW - 2, 10, 40, 60, 110, 230);
+    }
+
     // Party: one column per member; the one choosing a command is lit up
     Panel(&gfx, partyX, partyY, partyW, partyH);
     for (size_t i = 0; i < b.Party().size() && i < 2; i++) {
@@ -1083,6 +1180,24 @@ void Battle_DrawUi(PlayState* play) {
         text(x, partyY + 4, line, shade, shade, shade);
         snprintf(line, sizeof(line), "HP%3d MP%3d", c.hp, c.mp);
         text(x, partyY + 15, line, 200, 220, 200);
+    }
+
+    if (pointsUi) {
+        const PartyMember& pm = Party_Members()[sScene.statMember];
+        char title[48];
+        snprintf(title, sizeof(title), "%s: %d point%s", pm.base.name.c_str(), pm.unspentStatPoints,
+                 pm.unspentStatPoints == 1 ? "" : "s");
+        text(ptsX + 6, ptsY + 4, title, 255, 230, 90);
+        text(ptsX + 6, ptsY + 13, "Choose a stat to raise", 150, 150, 170);
+        for (int i = 0; i < (int)Stat::Count; i++) {
+            bool sel = i == sScene.statCursor;
+            char row[24];
+            snprintf(row, sizeof(row), "%s%-3s %3d", sel ? ">" : " ", StatName((Stat)i), GetStat(pm.base, (Stat)i));
+            text(ptsX + 6, ptsY + 24 + i * 10, row, sel ? 255 : 210, sel ? 230 : 210, sel ? 90 : 210);
+            if (sel) {
+                text(ptsX + 6 + 10 * 8, ptsY + 24 + i * 10, "+1", 110, 230, 120);
+            }
+        }
     }
 
     gfx = GfxPrint_Close(&printer);

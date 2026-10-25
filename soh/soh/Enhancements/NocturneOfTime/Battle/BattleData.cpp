@@ -37,9 +37,44 @@ void SetAffinity(Combatant& c, Element e, Affinity a) {
     c.affinity[(size_t)e] = a;
 }
 
-// Grow a party member from level 1 to `level` using their archetype's growth.
+// Archetype growth: HP/MP per level and how strongly each stat attracts automatic points (St Ma Vi Ag Lu)
+struct Growth {
+    int hp, mp;
+    std::array<float, (size_t)Stat::Count> weights;
+};
+
+Growth GrowthOf(const Combatant& c) {
+    if (c.name == "Saria") {
+        return { 5, 4, { 0.4f, 4.0f, 2.0f, 2.0f, 1.6f } }; // druid: Magic first, then Vitality/Agility
+    }
+    return { 7, 1, { 3.2f, 0.7f, 2.4f, 2.0f, 1.2f } }; // Link / default hero: balanced, Strength first
+}
+
+Stat TopStat(const Combatant& c) {
+    Growth g = GrowthOf(c);
+    size_t best = 0;
+    for (size_t i = 1; i < g.weights.size(); i++) {
+        if (g.weights[i] > g.weights[best]) {
+            best = i;
+        }
+    }
+    return (Stat)best;
+}
+
+// Grow a party member from level 1 to `level`. Deterministic (fixed seed) so a new party is always the same;
+// the free points go to the archetype's main stat.
 void GrowTo(Combatant& c, int level) {
-    while (c.level < level && LevelUp(c)) {
+    uint32_t seed = 12345u + (uint32_t)c.name.size();
+    auto rng = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return (float)((seed >> 8) & 0xFFFF) / 65536.0f;
+    };
+    while (c.level < level) {
+        LevelGains g = LevelUp(c, rng);
+        if (!g.leveled) {
+            break;
+        }
+        AddStat(c, TopStat(c), kManualStatPoints);
     }
     c.hp = c.maxHp;
     c.mp = c.maxMp;
@@ -54,11 +89,12 @@ Combatant MakeLink(int level) {
     c.level = 1;
     c.maxHp = 50;
     c.maxMp = 6;
-    c.st = 6;
-    c.ma = 2;
-    c.vi = 5;
-    c.ag = 5;
-    c.lu = 5;
+    // Level-1 stats are low because every level adds 6 stat points (5 automatic + 1 chosen)
+    c.st = 3;
+    c.ma = 1;
+    c.vi = 2;
+    c.ag = 2;
+    c.lu = 1;
     c.skills = {
         Describe(Attack(Element::Slash, 12), "A sword strike."),
         Describe(Make("Spin Attack", Element::Slash, TargetType::AllEnemies, 9, 0, 6),
@@ -77,11 +113,11 @@ Combatant MakeSaria(int level) {
     c.level = 1;
     c.maxHp = 34;
     c.maxMp = 28;
-    c.st = 3;
-    c.ma = 6;
-    c.vi = 4;
-    c.ag = 6;
-    c.lu = 6;
+    c.st = 1;
+    c.ma = 3;
+    c.vi = 1;
+    c.ag = 2;
+    c.lu = 2;
     SetAffinity(c, Element::Wind, Affinity::Drain);
     SetAffinity(c, Element::Strike, Affinity::Resist);
     SetAffinity(c, Element::Fire, Affinity::Weak);
@@ -186,30 +222,93 @@ int XpForLevel(int level) {
     return total;
 }
 
-bool LevelUp(Combatant& c) {
+const char* StatName(Stat s) {
+    switch (s) {
+        case Stat::St:
+            return "St";
+        case Stat::Ma:
+            return "Ma";
+        case Stat::Vi:
+            return "Vi";
+        case Stat::Ag:
+            return "Ag";
+        case Stat::Lu:
+            return "Lu";
+        default:
+            return "?";
+    }
+}
+
+int GetStat(const Combatant& c, Stat s) {
+    switch (s) {
+        case Stat::St:
+            return c.st;
+        case Stat::Ma:
+            return c.ma;
+        case Stat::Vi:
+            return c.vi;
+        case Stat::Ag:
+            return c.ag;
+        case Stat::Lu:
+            return c.lu;
+        default:
+            return 0;
+    }
+}
+
+void AddStat(Combatant& c, Stat s, int amount) {
+    switch (s) {
+        case Stat::St:
+            c.st += amount;
+            break;
+        case Stat::Ma:
+            c.ma += amount;
+            break;
+        case Stat::Vi:
+            c.vi += amount;
+            break;
+        case Stat::Ag:
+            c.ag += amount;
+            break;
+        case Stat::Lu:
+            c.lu += amount;
+            break;
+        default:
+            break;
+    }
+}
+
+LevelGains LevelUp(Combatant& c, const std::function<float()>& rand01) {
+    LevelGains g;
     if (c.level >= kLevelCap) {
-        return false;
+        return g;
     }
+    Growth growth = GrowthOf(c);
     c.level++;
-    if (c.name == "Saria") {
-        c.maxHp += 5;
-        c.maxMp += 4;
-        c.ma += 1;
-        c.ag += (c.level % 2 == 0) ? 1 : 0;
-        c.vi += (c.level % 3 == 0) ? 1 : 0;
-        c.st += (c.level % 4 == 0) ? 1 : 0;
-        c.lu += (c.level % 2 == 1) ? 1 : 0;
-    } else {
-        // Link and anyone without their own growth: balanced
-        c.maxHp += 7;
-        c.maxMp += 1;
-        c.st += 1;
-        c.vi += (c.level % 2 == 0) ? 1 : 0;
-        c.ag += (c.level % 2 == 1) ? 1 : 0;
-        c.ma += (c.level % 4 == 0) ? 1 : 0;
-        c.lu += (c.level % 3 == 0) ? 1 : 0;
+    g.leveled = true;
+    g.hp = growth.hp;
+    g.mp = growth.mp;
+    c.maxHp += growth.hp;
+    c.maxMp += growth.mp;
+
+    float total = 0.0f;
+    for (float w : growth.weights) {
+        total += w;
     }
-    return true;
+    for (int p = 0; p < kAutoStatPoints; p++) {
+        float roll = rand01() * total;
+        size_t pick = growth.weights.size() - 1;
+        for (size_t i = 0; i < growth.weights.size(); i++) {
+            if (roll < growth.weights[i]) {
+                pick = i;
+                break;
+            }
+            roll -= growth.weights[i];
+        }
+        g.stats[pick]++;
+        AddStat(c, (Stat)pick, 1);
+    }
+    return g;
 }
 
 } // namespace Nocturne

@@ -8,6 +8,7 @@
 #include "../../soh/soh/Enhancements/NocturneOfTime/Loot/Loot.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Party.h"
 
+#include <array>
 #include <cstdio>
 #include <map>
 #include <random>
@@ -38,22 +39,33 @@ static int AffixCount(const Item& item) {
 }
 
 static void TestRarityOdds() {
-    std::printf("Rarity odds\n");
-    std::map<Rarity, int> plain, lucky;
-    for (int i = 0; i < 20000; i++) {
-        plain[RollRarity(0.0f, Rng())]++;
-        lucky[RollRarity(1.0f, Rng())]++;
-    }
-    std::printf("  luck 0: C %d  U %d  R %d  L %d\n", plain[Rarity::Common], plain[Rarity::Uncommon],
-                plain[Rarity::Rare], plain[Rarity::Legendary]);
-    std::printf("  luck 1: C %d  U %d  R %d  L %d\n", lucky[Rarity::Common], lucky[Rarity::Uncommon],
-                lucky[Rarity::Rare], lucky[Rarity::Legendary]);
-    CHECK(plain[Rarity::Common] > plain[Rarity::Uncommon]);
-    CHECK(plain[Rarity::Uncommon] > plain[Rarity::Rare]);
-    CHECK(plain[Rarity::Rare] > plain[Rarity::Legendary]);
-    CHECK(plain[Rarity::Legendary] > 0);
-    CHECK(lucky[Rarity::Legendary] > plain[Rarity::Legendary] * 3);
-    CHECK(lucky[Rarity::Common] < plain[Rarity::Common]);
+    std::printf("Rarity odds by source\n");
+    auto count = [](DropSource src, float luck) {
+        std::map<Rarity, int> c;
+        for (int i = 0; i < 20000; i++) {
+            c[RollRarity(src, luck, Rng())]++;
+        }
+        std::printf("  source %d luck %.0f: C %5d  U %5d  R %5d  L %5d\n", (int)src, luck, c[Rarity::Common],
+                    c[Rarity::Uncommon], c[Rarity::Rare], c[Rarity::Legendary]);
+        return c;
+    };
+    std::map<Rarity, int> common = count(DropSource::Common, 0.0f);
+    std::map<Rarity, int> lucky = count(DropSource::Common, 1.0f);
+    std::map<Rarity, int> elite = count(DropSource::Elite, 0.0f);
+    std::map<Rarity, int> boss = count(DropSource::Boss, 0.0f);
+
+    // Common enemies: never Legendary, mostly white and blue, purple rare (~4%)
+    CHECK(common[Rarity::Legendary] == 0 && lucky[Rarity::Legendary] == 0);
+    CHECK(common[Rarity::Common] > common[Rarity::Uncommon]);
+    CHECK(common[Rarity::Uncommon] > common[Rarity::Rare] * 4);
+    CHECK(common[Rarity::Rare] < 20000 * 0.06);
+    CHECK(lucky[Rarity::Rare] > common[Rarity::Rare]); // luck still helps
+    // Elites and bosses can drop Legendaries; bosses never drop plain items
+    CHECK(elite[Rarity::Legendary] > 0);
+    CHECK(boss[Rarity::Common] == 0 && boss[Rarity::Legendary] > elite[Rarity::Legendary]);
+
+    std::array<float, 4> odds = RarityOdds(DropSource::Common, 0.0f);
+    CHECK(odds[0] + odds[1] + odds[2] + odds[3] > 99.9f && odds[0] + odds[1] + odds[2] + odds[3] < 100.1f);
 }
 
 static void TestAffixCounts() {
@@ -177,6 +189,25 @@ static void TestDescriptions() {
     CHECK(RarityColor(Rarity::Legendary).r == 255);
 }
 
+static void TestLore() {
+    std::printf("Descriptions and lore\n");
+    for (const ItemBase& b : AllBases()) {
+        CHECK(!b.description.empty());
+        if (b.legendary) {
+            CHECK(b.lore.size() > b.description.size());
+        }
+    }
+    for (int i = 0; i < 200; i++) {
+        Item r = RollItemOfRarity(5, Rarity::Rare, Rng());
+        std::string lore = ItemLore(r);
+        CHECK(lore.find(BaseOf(r).name) != std::string::npos); // "Once an ordinary <base>..."
+        CHECK(lore.find("Something changed it") == std::string::npos); // every first word has a history
+        Item u = RollItemOfRarity(5, Rarity::Uncommon, Rng());
+        CHECK(ItemLore(u) == ItemDescription(u));
+    }
+    CHECK(ItemLore(MakeCommon(100)).find("Biggoron") != std::string::npos);
+}
+
 static void TestParty() {
     std::printf("Party equipment\n");
     Party_Reset();
@@ -225,11 +256,12 @@ int main() {
     TestApplyGear();
     TestDescriptions();
     TestParty();
+    TestLore();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");
     for (int i = 0; i < 12; i++) {
-        Item it = RollItem(5, 0.3f, Rng());
+        Item it = RollItem(5, DropSource::Common, 0.3f, Rng());
         std::printf("  [%-9s] %-30s", RarityName(it.rarity), it.name.c_str());
         for (const std::string& l : DescribeItem(it)) {
             std::printf(" %s;", l.c_str());

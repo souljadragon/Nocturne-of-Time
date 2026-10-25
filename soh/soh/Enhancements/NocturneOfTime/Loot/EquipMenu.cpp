@@ -47,6 +47,7 @@ struct Menu {
     int itemCursor = 0; // index into Choices()
     int itemScroll = 0;
     int stickDir = 0;
+    bool showLore = false; // Z: the right panel shows the focused item's description and lore
 };
 
 Menu sMenu;
@@ -76,7 +77,7 @@ std::vector<int> Choices() {
 }
 
 struct Buttons {
-    bool up = false, down = false, a = false, b = false, r = false;
+    bool up = false, down = false, a = false, b = false, r = false, z = false;
 };
 
 Buttons Read(Input* input) {
@@ -94,6 +95,7 @@ Buttons Read(Input* input) {
     out.a = input->press.button & BTN_A;
     out.b = input->press.button & BTN_B;
     out.r = input->press.button & BTN_R;
+    out.z = input->press.button & BTN_Z;
     return out;
 }
 
@@ -163,6 +165,11 @@ void EquipMenu_Update(void* inputPtr) {
 
     if (in.r) {
         EquipMenu_Close();
+        return;
+    }
+    if (in.z && sMenu.page != Page::Members) {
+        sMenu.showLore = !sMenu.showLore;
+        PlaySfx(NA_SE_SY_CURSOR);
         return;
     }
 
@@ -252,6 +259,21 @@ static void MenuRect(Gfx** gfx, s32 x, s32 y, s32 w, s32 h, u8 r, u8 g, u8 b, u8
 static void MenuPanel(Gfx** gfx, s32 x, s32 y, s32 w, s32 h) {
     MenuRect(gfx, x - 1, y - 1, w + 2, h + 2, 120, 140, 170, 210);
     MenuRect(gfx, x, y, w, h, 10, 14, 30, 215);
+}
+
+// Word-wrap into lines of at most `chars` characters.
+static std::vector<std::string> Wrap(const std::string& text, size_t chars) {
+    std::vector<std::string> lines;
+    std::string rest = text;
+    while (!rest.empty()) {
+        size_t cut = rest.size() <= chars ? rest.size() : rest.rfind(' ', chars);
+        if (cut == std::string::npos || cut == 0) {
+            cut = std::min(rest.size(), chars);
+        }
+        lines.push_back(rest.substr(0, cut));
+        rest = cut < rest.size() ? rest.substr(cut + (rest[cut] == ' ' ? 1 : 0)) : "";
+    }
+    return lines;
 }
 
 static std::string Fit(const std::string& s, size_t chars) {
@@ -360,8 +382,56 @@ void EquipMenu_Draw(PlayState* play) {
         text(leftX + 3, slotY + 3 + i * 10, kSlotLabels[i], sel ? 255 : 200, sel ? 230 : 200, sel ? 90 : 200);
     }
 
+    // The item the right panel is about: the equipped one on the slot page, the highlighted one in the list
+    const Item* focus = nullptr;
+    if (sMenu.page == Page::Slots && m.gear[sMenu.slot]) {
+        focus = &*m.gear[sMenu.slot];
+    } else if (sMenu.page == Page::Items && !choices.empty()) {
+        int pick = choices[std::clamp(sMenu.itemCursor, 0, (int)choices.size() - 1)];
+        if (pick >= 0) {
+            focus = &Party_Bag()[pick];
+        }
+    }
+
     int y = rightY + 4;
-    if (sMenu.page != Page::Items) {
+    if (sMenu.showLore && sMenu.page != Page::Members) {
+        // Lore view: name, rarity, description, then the item's story
+        if (focus == nullptr) {
+            text(rightX + 4, y, "Nothing selected.", 150, 150, 150);
+        } else {
+            Rgb c = RarityColor(focus->rarity);
+            for (const std::string& l : Wrap(focus->name, rightChars)) {
+                text(rightX + 4, y, l, c.r, c.g, c.b);
+                y += 9;
+            }
+            text(rightX + 4, y, std::string(RarityName(focus->rarity)) + " " + SlotName(BaseOf(*focus).slot), 150,
+                 150, 170);
+            y += 14;
+            std::string lore = ItemLore(*focus);
+            std::string desc = ItemDescription(*focus);
+            if (lore != desc) {
+                for (const std::string& l : Wrap(desc, rightChars)) {
+                    text(rightX + 4, y, l, 170, 200, 160);
+                    y += 9;
+                }
+                y += 5;
+            }
+            for (const std::string& l : Wrap(lore, rightChars)) {
+                if (y > rightY + rightH - 20) {
+                    break;
+                }
+                text(rightX + 4, y, l, 225, 220, 205);
+                y += 9;
+            }
+            if (!BaseOf(*focus).effectText.empty()) {
+                y += 5;
+                for (const std::string& l : Wrap(BaseOf(*focus).effectText, rightChars)) {
+                    text(rightX + 4, y, l, 255, 170, 80);
+                    y += 9;
+                }
+            }
+        }
+    } else if (sMenu.page != Page::Items) {
         // Equipped gear, then the member's stats
         for (int i = 0; i < (int)Slot::Count; i++) {
             text(rightX + 4, y, std::string(kSlotLabels[i]), 140, 150, 180);
@@ -405,6 +475,14 @@ void EquipMenu_Draw(PlayState* play) {
                     break;
                 }
                 text(rightX + 8, y, l, 200, 200, 210);
+                y += 9;
+            }
+            y += 4;
+            for (const std::string& l : Wrap(ItemDescription(item), rightChars)) {
+                if (y > rightY + rightH - 10) {
+                    break;
+                }
+                text(rightX + 4, y, l, 170, 200, 160);
                 y += 9;
             }
         }
@@ -455,6 +533,10 @@ void EquipMenu_Draw(PlayState* play) {
                     name = cut < name.size() ? name.substr(cut + 1) : "";
                     y += 9;
                 }
+                for (const std::string& l : Wrap(ItemDescription(item), rightChars)) {
+                    text(rightX + 4, y, l, 170, 200, 160);
+                    y += 9;
+                }
                 std::string mods;
                 for (const std::string& l : DescribeItem(item)) {
                     mods += (mods.empty() ? "" : ", ") + l;
@@ -486,8 +568,10 @@ void EquipMenu_Draw(PlayState* play) {
     }
 
     const char* hint = sMenu.page == Page::Members ? "A: Choose  B/R: Close"
-                       : sMenu.page == Page::Slots ? "A: Change  B: Back  R: Close"
-                                                   : "A: Equip  B: Back  R: Close";
+                       : sMenu.page == Page::Slots ? (sMenu.showLore ? "A: Change  B: Back  Z: Stats"
+                                                                     : "A: Change  B: Back  Z: Lore")
+                                                   : (sMenu.showLore ? "A: Equip  B: Back  Z: Stats"
+                                                                     : "A: Equip  B: Back  Z: Lore");
     text(leftX, SCREEN_HEIGHT - 26, hint, 150, 150, 170);
 
     gfx = GfxPrint_Close(&printer);

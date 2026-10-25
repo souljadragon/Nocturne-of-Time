@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <deque>
+#include <array>
 #include <random>
 
 using namespace Nocturne;
@@ -227,6 +228,51 @@ static void TestLevels() {
     CHECK(XpForLevel(1) == 0 && XpForLevel(2) == 40);
 }
 
+static void TestLevelUpPoints() {
+    std::printf("Level-up stat points\n");
+    std::mt19937 gen(7);
+    std::uniform_real_distribution<float> dist(0.0f, 0.99999f);
+    auto rng = [&] { return dist(gen); };
+
+    // Every level spreads exactly kAutoStatPoints automatically
+    Combatant saria = MakeSaria(1);
+    int sumBefore = saria.st + saria.ma + saria.vi + saria.ag + saria.lu;
+    LevelGains g = LevelUp(saria, rng);
+    int sumAfter = saria.st + saria.ma + saria.vi + saria.ag + saria.lu;
+    CHECK(g.leveled && saria.level == 2);
+    CHECK(sumAfter - sumBefore == kAutoStatPoints);
+    int gained = 0;
+    for (int v : g.stats) {
+        gained += v;
+    }
+    CHECK(gained == kAutoStatPoints);
+    CHECK(g.hp > 0 && g.mp > 0);
+
+    // Over many levels the archetype shows: Saria's Magic grows fastest, Link's Strength; others still grow
+    Combatant s2 = MakeSaria(1), l2 = MakeLink(1);
+    std::array<int, (size_t)Stat::Count> sariaTotal{}, linkTotal{};
+    for (int i = 0; i < 60; i++) {
+        LevelGains gs = LevelUp(s2, rng), gl = LevelUp(l2, rng);
+        for (size_t k = 0; k < sariaTotal.size(); k++) {
+            sariaTotal[k] += gs.stats[k];
+            linkTotal[k] += gl.stats[k];
+        }
+    }
+    CHECK(sariaTotal[(size_t)Stat::Ma] > sariaTotal[(size_t)Stat::Vi]);
+    CHECK(sariaTotal[(size_t)Stat::Ma] > sariaTotal[(size_t)Stat::St] * 4);
+    CHECK(sariaTotal[(size_t)Stat::St] > 0); // occasional Strength for variety
+    CHECK(linkTotal[(size_t)Stat::St] > linkTotal[(size_t)Stat::Ma] * 2);
+    std::printf("  Saria over 60 levels: St %d Ma %d Vi %d Ag %d Lu %d\n", sariaTotal[0], sariaTotal[1],
+                sariaTotal[2], sariaTotal[3], sariaTotal[4]);
+
+    // A fresh party is always identical, and lands near the old level-5 strength (~33 stat points for Link)
+    Combatant a = MakeLink(5), b = MakeLink(5);
+    CHECK(a.st == b.st && a.ma == b.ma && a.vi == b.vi && a.ag == b.ag && a.lu == b.lu);
+    int linkSum = a.st + a.ma + a.vi + a.ag + a.lu;
+    CHECK(linkSum == 9 + 4 * (kAutoStatPoints + kManualStatPoints));
+    std::printf("  Link at level 5: St %d Ma %d Vi %d Ag %d Lu %d\n", a.st, a.ma, a.vi, a.ag, a.lu);
+}
+
 static void TestRandomBattlesFinish() {
     std::printf("Random battles always finish\n");
     std::mt19937 gen(1234);
@@ -288,6 +334,7 @@ int main() {
     TestLinkFallingIsDefeat();
     TestSkillCosts();
     TestLevels();
+    TestLevelUpPoints();
     TestRandomBattlesFinish();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

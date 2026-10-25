@@ -54,8 +54,10 @@ StatMod Mod(StatKind kind, int value, Element element = Element::Slash) {
     return { kind, value, element };
 }
 
-ItemBase Base(int id, const char* name, Slot slot, Wielder wielder, int tier, std::vector<StatMod> mods) {
+ItemBase Base(int id, const char* name, Slot slot, Wielder wielder, int tier, std::vector<StatMod> mods,
+              const char* description) {
     ItemBase b;
+    b.description = description;
     b.id = id;
     b.name = name;
     b.slot = slot;
@@ -66,8 +68,9 @@ ItemBase Base(int id, const char* name, Slot slot, Wielder wielder, int tier, st
 }
 
 ItemBase Legendary(int id, const char* name, Slot slot, Wielder wielder, std::vector<StatMod> mods,
-                   UniqueEffect effect, const char* effectText) {
-    ItemBase b = Base(id, name, slot, wielder, 3, std::move(mods));
+                   UniqueEffect effect, const char* effectText, const char* description, const char* lore) {
+    ItemBase b = Base(id, name, slot, wielder, 3, std::move(mods), description);
+    b.lore = lore;
     b.legendary = true;
     b.effect = effect;
     b.effectText = effectText;
@@ -78,37 +81,61 @@ std::vector<ItemBase> BuildBases() {
     using S = StatKind;
     return {
         // Link: swords and tunics
-        Base(1, "Kokiri Sword", Slot::Weapon, Wielder::Link, 1, { Mod(S::WeaponPower, 3) }),
-        Base(2, "Hylian Blade", Slot::Weapon, Wielder::Link, 2, { Mod(S::WeaponPower, 6) }),
-        Base(3, "Knight's Sword", Slot::Weapon, Wielder::Link, 3, { Mod(S::WeaponPower, 9) }),
-        Base(10, "Kokiri Tunic", Slot::Armor, Wielder::Link, 1, { Mod(S::Vi, 1), Mod(S::MaxHp, 6) }),
-        Base(11, "Hylian Mail", Slot::Armor, Wielder::Link, 2, { Mod(S::Vi, 3), Mod(S::MaxHp, 10) }),
-        Base(12, "Knight's Tunic", Slot::Armor, Wielder::Link, 3, { Mod(S::Vi, 5), Mod(S::MaxHp, 16) }),
+        Base(1, "Kokiri Sword", Slot::Weapon, Wielder::Link, 1, { Mod(S::WeaponPower, 3) },
+             "A small blade forged by the Kokiri. Light and reliable."),
+        Base(2, "Hylian Blade", Slot::Weapon, Wielder::Link, 2, { Mod(S::WeaponPower, 6) },
+             "Standard steel of the Hylian guard."),
+        Base(3, "Knight's Sword", Slot::Weapon, Wielder::Link, 3, { Mod(S::WeaponPower, 9) },
+             "A broad blade once carried by Hyrule's knights."),
+        Base(10, "Kokiri Tunic", Slot::Armor, Wielder::Link, 1, { Mod(S::Vi, 1), Mod(S::MaxHp, 6) },
+             "Green cloth woven in the forest. Better than nothing."),
+        Base(11, "Hylian Mail", Slot::Armor, Wielder::Link, 2, { Mod(S::Vi, 3), Mod(S::MaxHp, 10) },
+             "Chain mail worn under a Hylian tabard."),
+        Base(12, "Knight's Tunic", Slot::Armor, Wielder::Link, 3, { Mod(S::Vi, 5), Mod(S::MaxHp, 16) },
+             "Padded plate from the castle armory."),
         // Saria: staves and robes
-        Base(4, "Forest Staff", Slot::Weapon, Wielder::Saria, 1, { Mod(S::MagicPower, 3) }),
-        Base(5, "Fairy Ocarina", Slot::Weapon, Wielder::Saria, 2, { Mod(S::MagicPower, 5), Mod(S::MaxMp, 4) }),
-        Base(6, "Sage's Rod", Slot::Weapon, Wielder::Saria, 3, { Mod(S::MagicPower, 8) }),
-        Base(13, "Leaf Robe", Slot::Armor, Wielder::Saria, 1, { Mod(S::Vi, 1), Mod(S::MaxMp, 4) }),
-        Base(14, "Forest Robe", Slot::Armor, Wielder::Saria, 2, { Mod(S::Vi, 2), Mod(S::MaxMp, 8) }),
+        Base(4, "Forest Staff", Slot::Weapon, Wielder::Saria, 1, { Mod(S::MagicPower, 3) },
+             "A branch from the Lost Woods, still humming with life."),
+        Base(5, "Fairy Ocarina", Slot::Weapon, Wielder::Saria, 2, { Mod(S::MagicPower, 5), Mod(S::MaxMp, 4) },
+             "A simple ocarina. Songs carry further through it."),
+        Base(6, "Sage's Rod", Slot::Weapon, Wielder::Saria, 3, { Mod(S::MagicPower, 8) },
+             "A rod carved with the marks of the ancient sages."),
+        Base(13, "Leaf Robe", Slot::Armor, Wielder::Saria, 1, { Mod(S::Vi, 1), Mod(S::MaxMp, 4) },
+             "Woven from broad forest leaves. Light as air."),
+        Base(14, "Forest Robe", Slot::Armor, Wielder::Saria, 2, { Mod(S::Vi, 2), Mod(S::MaxMp, 8) },
+             "A mossy robe that soaks up the magic of the woods."),
         Base(15, "Sage's Robe", Slot::Armor, Wielder::Saria, 3,
-             { Mod(S::Vi, 3), Mod(S::MaxMp, 12), Mod(S::MaxHp, 6) }),
+             { Mod(S::Vi, 3), Mod(S::MaxMp, 12), Mod(S::MaxHp, 6) }, "Ceremonial robes of the Temple of Time."),
         // Anyone: accessories
-        Base(20, "Deku Charm", Slot::Accessory, Wielder::Anyone, 1, { Mod(S::Lu, 2) }),
-        Base(21, "Silver Ring", Slot::Accessory, Wielder::Anyone, 1, { Mod(S::MaxHp, 10) }),
-        Base(22, "Fairy Bracelet", Slot::Accessory, Wielder::Anyone, 2, { Mod(S::Ag, 2) }),
-        Base(23, "Spirit Bead", Slot::Accessory, Wielder::Anyone, 2, { Mod(S::MaxMp, 6) }),
+        Base(20, "Deku Charm", Slot::Accessory, Wielder::Anyone, 1, { Mod(S::Lu, 2) },
+             "A Deku Nut on a string. Said to bring luck."),
+        Base(21, "Silver Ring", Slot::Accessory, Wielder::Anyone, 1, { Mod(S::MaxHp, 10) },
+             "A plain silver band. It makes the wearer hardier."),
+        Base(22, "Fairy Bracelet", Slot::Accessory, Wielder::Anyone, 2, { Mod(S::Ag, 2) },
+             "Holds the faint glow of a fairy. Quickens the step."),
+        Base(23, "Spirit Bead", Slot::Accessory, Wielder::Anyone, 2, { Mod(S::MaxMp, 6) },
+             "A glass bead holding a small spark of spirit."),
         // Legendaries
         Legendary(100, "Biggoron's Edge", Slot::Weapon, Wielder::Link,
                   { Mod(S::WeaponPower, 14), Mod(S::CritPct, 15), Mod(S::St, 2) }, UniqueEffect::None,
-                  "Critical hits come easily."),
+                  "Critical hits come easily.", "The masterwork of the giant smith Biggoron.",
+                  "Biggoron worked his forge atop Death Mountain for a year to make this blade, and swore he would "
+                  "never make another. It never dulls, and the Gorons say it cuts truest under a full moon."),
         Legendary(101, "Fairy Ocarina of the Lost Woods", Slot::Weapon, Wielder::Saria,
                   { Mod(S::MagicPower, 9), Mod(S::HealPct, 50), Mod(S::MaxMp, 10) }, UniqueEffect::None,
-                  "Healing songs restore half again as much."),
+                  "Healing songs restore half again as much.", "The first ocarina ever played in the Lost Woods.",
+                  "Its songs once guided lost children home through the woods. Now they mend what the moon's curse "
+                  "has broken, and the trees still lean in to listen."),
         Legendary(102, "Goron Tunic", Slot::Armor, Wielder::Link,
                   { Mod(S::Vi, 6), Mod(S::MaxHp, 20), Mod(S::Resist, 0, Element::Fire) }, UniqueEffect::None,
-                  "Forged in Death Mountain: shrugs off flame."),
+                  "Forged in Death Mountain: shrugs off flame.", "Fire-proof garb of the Goron smiths.",
+                  "Woven from stone fibre in the heat of Death Mountain. Darunia's people wear it to walk the "
+                  "molten heart of the mountain, and it has never once let the fire through."),
         Legendary(103, "Mask of Truth", Slot::Accessory, Wielder::Anyone, { Mod(S::Lu, 4) },
-                  UniqueEffect::AutoAnalyze, "Reveals every foe's affinities when a battle starts."),
+                  UniqueEffect::AutoAnalyze, "Reveals every foe's affinities when a battle starts.",
+                  "A mask that sees through every lie.",
+                  "Carved for one who would see beyond all deceit. Through its eyes no creature can hide what it "
+                  "fears, and those who wear it too long begin to hear what others will not say."),
     };
 }
 
@@ -223,23 +250,39 @@ const ItemBase& BaseOf(const Item& item) {
     return AllBases().front();
 }
 
-Rarity RollRarity(float luck, const LootRng& rng) {
+std::array<float, 4> RarityOdds(DropSource source, float luck) {
     luck = std::clamp(luck, 0.0f, 1.0f);
-    float weights[4] = {
-        62.0f - 30.0f * luck, // Common
-        28.0f + 10.0f * luck, // Uncommon
-        9.0f + 15.0f * luck,  // Rare
-        1.0f + 5.0f * luck,   // Legendary
-    };
-    float total = weights[0] + weights[1] + weights[2] + weights[3];
-    float roll = rng() * total;
+    std::array<float, 4> w;
+    switch (source) {
+        case DropSource::Boss:
+            w = { 0.0f, 40.0f - 10.0f * luck, 45.0f, 15.0f + 10.0f * luck };
+            break;
+        case DropSource::Elite:
+            w = { 40.0f - 15.0f * luck, 40.0f, 17.0f + 10.0f * luck, 3.0f + 5.0f * luck };
+            break;
+        case DropSource::Common:
+        default:
+            // Whites and blues; purples are a rare treat; never Legendary
+            w = { 70.0f - 20.0f * luck, 26.0f + 12.0f * luck, 4.0f + 8.0f * luck, 0.0f };
+            break;
+    }
+    float total = w[0] + w[1] + w[2] + w[3];
+    for (float& v : w) {
+        v = v * 100.0f / total;
+    }
+    return w;
+}
+
+Rarity RollRarity(DropSource source, float luck, const LootRng& rng) {
+    std::array<float, 4> odds = RarityOdds(source, luck);
+    float roll = rng() * 100.0f;
     for (int i = 0; i < 4; i++) {
-        if (roll < weights[i]) {
+        if (odds[i] > 0.0f && roll < odds[i]) {
             return (Rarity)i;
         }
-        roll -= weights[i];
+        roll -= odds[i];
     }
-    return Rarity::Common;
+    return odds[0] > 0.0f ? Rarity::Common : Rarity::Uncommon;
 }
 
 Item MakeCommon(int baseId) {
@@ -361,8 +404,8 @@ Item RollItemOfRarity(int itemLevel, Rarity rarity, const LootRng& rng) {
     return item;
 }
 
-Item RollItem(int itemLevel, float luck, const LootRng& rng) {
-    return RollItemOfRarity(itemLevel, RollRarity(luck, rng), rng);
+Item RollItem(int itemLevel, DropSource source, float luck, const LootRng& rng) {
+    return RollItemOfRarity(itemLevel, RollRarity(source, luck, rng), rng);
 }
 
 bool CanEquip(const Item& item, const std::string& memberName) {
@@ -431,6 +474,45 @@ void ApplyGear(Combatant& c, const std::vector<const Item*>& gear) {
             }
         }
     }
+}
+
+std::string ItemDescription(const Item& item) {
+    return BaseOf(item).description;
+}
+
+std::string ItemLore(const Item& item) {
+    const ItemBase& b = BaseOf(item);
+    if (b.legendary) {
+        return b.lore;
+    }
+    if (item.rarity != Rarity::Rare) {
+        return b.description;
+    }
+    // Rare items: a history from the first word of their name
+    static const std::pair<const char*, const char*> kHistory[] = {
+        { "Gloom", "The endless gloom of the Lost Woods still clings to it." },
+        { "Doom", "Every hand that carried it before met a grim end." },
+        { "Dusk", "It seems to darken as evening falls." },
+        { "Grim", "Scarred and pitted from countless battles." },
+        { "Storm", "The air crackles faintly around it." },
+        { "Ember", "Faintly warm, as if pulled from a dying fire." },
+        { "Bone", "Worked with pale bone from no beast anyone can name." },
+        { "Shadow", "It casts no shadow of its own." },
+        { "Moon", "It glows softly under the moon, brightest when it is full." },
+        { "Ruin", "Recovered from the ruins of a fallen part of Hyrule." },
+    };
+    std::string history = "Something changed it long ago.";
+    for (const auto& [word, text] : kHistory) {
+        if (item.name.rfind(word, 0) == 0) {
+            history = text;
+            break;
+        }
+    }
+    const char* article = (b.name[0] == 'A' || b.name[0] == 'E' || b.name[0] == 'I' || b.name[0] == 'O' ||
+                           b.name[0] == 'U')
+                              ? "an"
+                              : "a";
+    return history + " Once " + article + " ordinary " + b.name + ", it is something else now.";
 }
 
 std::string DescribeMod(const StatMod& m) {

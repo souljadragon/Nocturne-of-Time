@@ -15,6 +15,7 @@ namespace Nocturne {
 struct PartyMember {
     Combatant base; // stats without equipment; base.hp / base.mp are the *current* HP/MP
     int xp = 0;
+    int unspentStatPoints = 0; // from level-ups, waiting for the player to place them
     std::array<std::optional<Item>, (size_t)Slot::Count> gear;
 };
 

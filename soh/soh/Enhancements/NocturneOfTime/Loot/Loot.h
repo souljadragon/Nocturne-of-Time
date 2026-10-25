@@ -10,6 +10,7 @@
 
 #include "../Battle/BattleEngine.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -67,6 +68,8 @@ struct ItemBase {
     bool legendary = false;
     UniqueEffect effect = UniqueEffect::None;
     std::string effectText;
+    std::string description; // a line or two about the base item
+    std::string lore;        // Legendaries: their story
 };
 
 struct Item {
@@ -83,11 +86,17 @@ using LootRng = std::function<float()>; // uniform in [0, 1)
 const std::vector<ItemBase>& AllBases();
 const ItemBase& BaseOf(const Item& item);
 
-// Rarity odds. `luck` in [0, 1] shifts them toward rarer results (the moon phase will drive this).
-Rarity RollRarity(float luck, const LootRng& rng);
+// Where a drop comes from. Common enemies never drop Legendaries (those come from quests, crafting, bosses and
+// rare, powerful enemies) and rarely drop Rares.
+enum class DropSource : uint8_t { Common, Elite, Boss };
 
-// A random item suited to `itemLevel` (roughly the enemy level). `rarity` forces a tier when given.
-Item RollItem(int itemLevel, float luck, const LootRng& rng);
+// Rarity odds for a source. `luck` in [0, 1] shifts them toward rarer results (the moon phase will drive this).
+Rarity RollRarity(DropSource source, float luck, const LootRng& rng);
+// Chance in percent of each rarity (Common, Uncommon, Rare, Legendary) for a source and luck.
+std::array<float, 4> RarityOdds(DropSource source, float luck);
+
+// A random item suited to `itemLevel` (roughly the enemy level).
+Item RollItem(int itemLevel, DropSource source, float luck, const LootRng& rng);
 Item RollItemOfRarity(int itemLevel, Rarity rarity, const LootRng& rng);
 
 // A specific base with no affixes (starting gear).
@@ -97,6 +106,11 @@ bool CanEquip(const Item& item, const std::string& memberName);
 
 // Apply equipped items to a combatant's stats (call on a copy of the member's base stats).
 void ApplyGear(Combatant& c, const std::vector<const Item*>& gear);
+
+// Short description shown with an item (the base item's).
+std::string ItemDescription(const Item& item);
+// Longer background: a Legendary's lore, a Rare's generated history, or the description for anything else.
+std::string ItemLore(const Item& item);
 
 // One line per stat, e.g. "Power +6", "Max HP +10", "Resist Fire".
 std::vector<std::string> DescribeItem(const Item& item);
