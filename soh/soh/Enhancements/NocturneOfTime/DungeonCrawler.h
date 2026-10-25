@@ -7,3 +7,6 @@ bool DungeonCrawler_IsActive();
 
 // The grid direction Link faces: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X.
 signed char DungeonCrawler_GetFacing();
+
+// Turn to face grid direction `facing` (0..3), e.g. so a battle has room in front.
+void DungeonCrawler_SetFacing(signed char facing);

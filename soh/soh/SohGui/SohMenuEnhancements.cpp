@@ -211,6 +211,8 @@ void SohMenu::AddMenuEnhancements() {
             "Hold Z + left/right: strafe\n"
             "Right stick up/down: look up/down\n"
             "L: switch between the corner map and the large map\n"
+            "Random battles: the gem above the map turns yellow, then red, as one gets close.\n"
+            "In battle: stick/D-pad to choose, A to confirm, B to go back.\n"
             "A, B and items work as normal."));
 
     // Quality of Life

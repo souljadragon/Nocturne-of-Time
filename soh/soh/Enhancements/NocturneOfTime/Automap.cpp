@@ -12,6 +12,7 @@
 #include "soh/ShipInit.hpp"
 #include "Automap.h"
 #include "DungeonCrawler.h"
+#include "Battle/BattleScene.h"
 #include "soh/frame_interpolation.h"
 
 #include <math.h>
@@ -217,6 +218,9 @@ static void DrawMap(PlayState* play) {
     }
 
     CLOSE_DISPS(play->state.gfxCtx);
+
+    // Encounter danger gem at the map's top-left corner
+    Battle_DrawDangerGem(play, x0 - 2, y0 - 12);
 }
 
 namespace {
@@ -227,7 +231,11 @@ void RegisterAutomap() {
     COND_VB_SHOULD(VB_DRAW_MINIMAP, enabled, {
         PlayState* play = va_arg(args, PlayState*);
         if (DungeonCrawler_IsActive() && play->pauseCtx.state == 0) {
-            DrawMap(play);
+            if (Battle_IsActive()) {
+                Battle_DrawUi(play);
+            } else {
+                DrawMap(play);
+            }
             *should = false;
         }
     });

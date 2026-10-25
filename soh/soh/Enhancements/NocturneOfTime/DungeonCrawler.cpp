@@ -18,6 +18,7 @@
 #include "soh/ShipInit.hpp"
 #include "DungeonCrawler.h"
 #include "Automap.h"
+#include "Battle/BattleScene.h"
 
 #include <math.h>
 
@@ -268,6 +269,9 @@ void UpdateAction(Player* player) {
                 sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
                 sCrawler.action = Action::None;
+                if (gPlayState != NULL) {
+                    Battle_OnStep(gPlayState, player); // may start a battle
+                }
             }
             break;
         }
@@ -331,6 +335,7 @@ void Deactivate(Player* player) {
     sCrawler.active = false;
     sCrawler.action = Action::None;
     sCrawler.bumpAmount = 0.0f;
+    Battle_Abort();
     if (player != NULL) {
         player->actor.shape.shadowDraw = ActorShadow_DrawFeet;
     }
@@ -353,6 +358,24 @@ void OnFilterInput(Player* player, Input* input) {
     }
     if (!sCrawler.active) {
         Activate(player);
+    }
+
+    if (Battle_IsActive()) {
+        // The battle reads the controller; Link himself does nothing but finish turning to face the enemies
+        Battle_Update(play, player, input);
+        ClearMovementInput(input);
+        for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
+            pad->button &= ~(BTN_A | BTN_B | BTN_CLEFT | BTN_CDOWN | BTN_CRIGHT | BTN_CUP | BTN_R);
+        }
+        if (sCrawler.action == Action::Turn) {
+            UpdateAction(player);
+        }
+        player->linearVelocity = 0.0f;
+        player->actor.speedXZ = 0.0f;
+        player->yaw = sCrawler.curYaw;
+        player->actor.world.rot.y = sCrawler.curYaw;
+        player->actor.shape.rot.y = sCrawler.curYaw;
+        return;
     }
 
     const OSContPad& cur = input->cur;
@@ -483,6 +506,12 @@ bool DungeonCrawler_IsActive() {
 
 signed char DungeonCrawler_GetFacing() {
     return sCrawler.facing;
+}
+
+void DungeonCrawler_SetFacing(signed char facing) {
+    sCrawler.facing = (s8)(facing & 3);
+    sCrawler.action = Action::None;
+    StartTurn(FacingToYaw(sCrawler.facing));
 }
 
 static RegisterShipInitFunc initFunc(RegisterDungeonCrawler, { CVAR_CRAWLER_NAME });
