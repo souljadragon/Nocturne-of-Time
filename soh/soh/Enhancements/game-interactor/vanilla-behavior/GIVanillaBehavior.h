@@ -4206,4 +4206,27 @@ typedef enum {
     // - none
     VB_EMPTY_BOTTLE_OI,
 
+    // Nocturne of Time
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // Whether the camera runs its current setting's update function (normal, parallel, fixed, ...).
+    // Return false after writing camera->eye/at to drive the camera yourself.
+    // #### `args`
+    // - `Camera*` camera
+    VB_CAMERA_RUN_SETTING_FUNC,
+
+    // Nocturne of Time
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // Fired every Player_Update with the controller input Link is about to act on.
+    // Handlers may read and edit the input (e.g. clear the stick) before Link sees it.
+    // #### `args`
+    // - `Player*` player
+    // - `Input*` input
+    VB_PLAYER_FILTER_INPUT,
+
 } GIVanillaBehavior;

@@ -7623,7 +7623,9 @@ Vec3s Camera_Update(Camera* camera) {
                      sCameraSettings[camera->setting].cameraModes[camera->mode].funcIdx, camera->unk_14C);
     }
 
-    if (sOOBTimer < 200) {
+    if (!GameInteractor_Should(VB_CAMERA_RUN_SETTING_FUNC, true, camera)) {
+        // Nocturne of Time: a hook positioned the camera itself
+    } else if (sOOBTimer < 200) {
         sCameraFunctions[sCameraSettings[camera->setting].cameraModes[camera->mode].funcIdx](camera);
     } else if (camera->player != NULL) {
         OLib_Vec3fDiffToVecSphGeo(&eyeAtAngle, &camera->at, &camera->eye);

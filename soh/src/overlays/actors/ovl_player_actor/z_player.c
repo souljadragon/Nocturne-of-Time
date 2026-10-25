@@ -12238,6 +12238,9 @@ void Player_Update(Actor* thisx, PlayState* play) {
             }
         }
 
+        // Nocturne of Time: let the dungeon-crawler mode read and filter Link's input
+        GameInteractor_Should(VB_PLAYER_FILTER_INPUT, true, this, &input);
+
         if (CVarGetFloat(CVAR_CHEAT("SpeedModifier.Value"), 1.0f) != 1.0f &&
             CVarGetInteger(CVAR_CHEAT("SpeedModifier.SpeedToggle"), 0)) {
             const s32 mod1Mask = CVarGetInteger(CVAR_CHEAT("SpeedModifier.Btn"), BTN_CUSTOM_MODIFIER1);

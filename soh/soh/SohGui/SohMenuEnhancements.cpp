@@ -198,6 +198,20 @@ void SohMenu::AddMenuEnhancements() {
     // Add Enhancements Menu
     AddMenuEntry("Enhancements", CVAR_SETTING("Menu.EnhancementsSidebarSection"));
 
+    // Nocturne of Time
+    WidgetPath nocturnePath = { "Enhancements", "Nocturne of Time", SECTION_COLUMN_1 };
+    AddSidebarEntry("Enhancements", nocturnePath.sidebarName, 3);
+    AddWidget(nocturnePath, "Dungeon Crawler", WIDGET_SEPARATOR_TEXT);
+    AddWidget(nocturnePath, "First-Person Grid Movement", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_ENHANCEMENT("Nocturne.DungeonCrawler"))
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Explore dungeons in first person, one tile at a time (currently the Deku Tree).\n\n"
+            "Stick or D-pad up/down: step forward/back\n"
+            "Stick or D-pad left/right: turn 90 degrees\n"
+            "Hold Z + left/right: strafe\n"
+            "Right stick up/down: look up/down\n"
+            "A, B and items work as normal."));
+
     // Quality of Life
     WidgetPath path = { "Enhancements", "Quality of Life", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", path.sidebarName, 3);
