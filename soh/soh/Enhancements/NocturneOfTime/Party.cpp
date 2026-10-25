@@ -79,13 +79,13 @@ void Party_EnsureCreated(int startLevel) {
     }
     PartyMember link;
     link.base = MakeLink(startLevel);
-    link.xp = XpForLevel(startLevel);
+    link.xp = XpForLevel(startLevel, link.base.name);
     link.gear[(size_t)Slot::Weapon] = MakeCommon(BaseId::KokiriSword);
     link.gear[(size_t)Slot::Armor] = MakeCommon(BaseId::KokiriTunic);
 
     PartyMember saria;
     saria.base = MakeSaria(startLevel);
-    saria.xp = XpForLevel(startLevel);
+    saria.xp = XpForLevel(startLevel, saria.base.name);
     saria.gear[(size_t)Slot::Weapon] = MakeCommon(BaseId::ForestStaff);
     saria.gear[(size_t)Slot::Armor] = MakeCommon(BaseId::LeafRobe);
 

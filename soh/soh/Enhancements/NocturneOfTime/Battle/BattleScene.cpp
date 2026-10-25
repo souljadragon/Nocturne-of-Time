@@ -14,6 +14,7 @@
 #include "../Moon/Moon.h"
 #include "../Moon/MoonHud.h"
 #include "../UI/RetroUI.h"
+#include "../UI/RetroScreen.h"
 #include "../Loot/Loot.h"
 #include "../Party.h"
 #include "../DungeonCrawler.h"
@@ -164,32 +165,8 @@ std::vector<EnemyKind> RollEncounter() {
     return kinds;
 }
 
-// Navi is frozen with the rest of the dungeon during a battle and would hang in front of the camera: hide her
-// by clearing her draw function, and put it back afterwards (only if she is still the same actor).
-Actor* sHiddenNavi = NULL;
-ActorFunc sNaviDraw = NULL;
-
-void HideNavi(Player* player) {
-    if (player == NULL || player->naviActor == NULL || sHiddenNavi != NULL) {
-        return;
-    }
-    sHiddenNavi = player->naviActor;
-    sNaviDraw = sHiddenNavi->draw;
-    sHiddenNavi->draw = NULL;
-}
-
-void ShowNavi() {
-    if (sHiddenNavi != NULL && gPlayState != NULL && GET_PLAYER(gPlayState) != NULL &&
-        GET_PLAYER(gPlayState)->naviActor == sHiddenNavi && sHiddenNavi->draw == NULL) {
-        sHiddenNavi->draw = sNaviDraw;
-    }
-    sHiddenNavi = NULL;
-    sNaviDraw = NULL;
-}
-
 void StartBattle(PlayState* play, Player* player) {
     EnsureParty();
-    HideNavi(player);
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
 
@@ -253,21 +230,21 @@ void StartBattle(PlayState* play, Player* player) {
     for (const Combatant& e : enemies) {
         rowWidth += widthOf(e.kind);
     }
-    // Fit the row between the walls: measure the open space to each side of the row's centre and squeeze /
-    // shift the row so every enemy stands on open floor
+    // The row is always centred straight ahead of the camera (as in the Famicom games). Where walls are
+    // close it is squeezed together, never shifted sideways: the narrower side decides how far it can spread.
     const Vec3f& origin = player->actor.world.pos;
     Vec3f centre = { origin.x + fwd.x * dist, origin.y, origin.z + fwd.z * dist };
     const f32 kWallMargin = 24.0f;
     f32 freeRight = std::max(0.0f, FreeDistance(play, centre, (s16)(yaw - 0x4000), 220.0f) - kWallMargin);
     f32 freeLeft = std::max(0.0f, FreeDistance(play, centre, (s16)(yaw + 0x4000), 220.0f) - kWallMargin);
+    f32 room = 2.0f * std::min(freeLeft, freeRight);
+    // keep the whole group comfortably inside the view too
+    room = std::min(room, dist * 1.3f);
     f32 squeeze = 1.0f;
-    f32 room = freeLeft + freeRight;
     if (rowWidth > room && rowWidth > 0.0f) {
-        squeeze = std::max(0.45f, room / rowWidth); // crowd them together rather than into the wall
+        squeeze = std::max(0.35f, room / rowWidth); // crowd them together rather than into the wall
     }
-    f32 half = rowWidth * squeeze * 0.5f;
-    // offset of the row centre along `right` so its edges stay within [-freeLeft, freeRight]
-    f32 shift = (half * 2.0f <= room) ? CLAMP(0.0f, half - freeLeft, freeRight - half) : (freeRight - freeLeft) * 0.5f;
+    const f32 shift = 0.0f;
 
     sScene.enemyActors.clear();
     f32 cursor = -rowWidth * 0.5f;
@@ -303,8 +280,9 @@ void StartBattle(PlayState* play, Player* player) {
         if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY < pos.y - 80.0f) {
             floorY = pos.y;
         }
-        sScene.enemyActors.push_back(
-            BattleEnemyActor_Spawn(play, enemies[i].kind, pos.x, floorY, pos.z, (s16)(yaw + 0x8000)));
+        // Each enemy turns to look straight at the camera
+        s16 face = Math_Atan2S(origin.z - pos.z, origin.x - pos.x);
+        sScene.enemyActors.push_back(BattleEnemyActor_Spawn(play, enemies[i].kind, pos.x, floorY, pos.z, face));
     }
 
     // Battle stats include equipment
@@ -365,7 +343,6 @@ void EndBattle() {
         }
     }
     KillEnemyActors();
-    ShowNavi();
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
     sScene.battle.reset();
@@ -411,7 +388,7 @@ void QueueRewards() {
             continue; // fallen allies earn nothing
         }
         m.xp += xpFor(m);
-        while (m.xp >= XpForLevel(m.base.level + 1)) {
+        while (m.xp >= XpForLevel(m.base.level + 1, m.base.name)) {
             LevelGains gains = LevelUp(m.base, [] { return Rand_ZeroOne() * 0.99999f; });
             if (!gains.leveled) {
                 break;
@@ -768,8 +745,14 @@ void HandleInput(const Buttons& in) {
 
     switch (sScene.ui) {
         case Ui::Command:
+            // Two columns of four: up/down within a column, left/right across
             if (in.up || in.down) {
-                sScene.commandCursor = (sScene.commandCursor + (in.up ? CMD_COUNT - 1 : 1)) % CMD_COUNT;
+                int col = sScene.commandCursor / 4, row = sScene.commandCursor % 4;
+                row = (row + (in.up ? 3 : 1)) % 4;
+                sScene.commandCursor = col * 4 + row;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else if (in.left || in.right) {
+                sScene.commandCursor = (sScene.commandCursor + 4) % CMD_COUNT;
                 PlaySfx(NA_SE_SY_CURSOR);
             } else if (in.a) {
                 switch (sScene.commandCursor) {
@@ -973,8 +956,6 @@ void RegisterBattleScene() {
     COND_HOOK(OnSceneInit, enabled, [](int16_t sceneNum) {
         // Actors from the old scene are gone; drop the battle without touching them
         sScene.enemyActors.clear();
-        sHiddenNavi = NULL; // the old Navi is gone with the old scene
-        sNaviDraw = NULL;
         sScene.battle.reset();
         sScene.ui = Ui::None;
         sScene.queue.clear();
@@ -1005,7 +986,6 @@ bool Battle_IsActive() {
 
 void Battle_Abort() {
     KillEnemyActors();
-    ShowNavi();
     sScene.battle.reset();
     sScene.ui = Ui::None;
     sScene.queue.clear();
@@ -1106,20 +1086,8 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
 
 // The Famicom Megami Tensei look (see UI/RetroUI): black windows with white rules, our pixel font, ▶ cursors.
 
-void Battle_DrawDangerGem(PlayState* play, int x, int y) {
-    if (Battle_IsActive()) {
-        return;
-    }
-    Retro::Color c = Retro::Blue;
-    if (sDanger >= kDangerRed) {
-        c = Retro::Red;
-    } else if (sDanger >= kDangerYellow) {
-        c = Retro::Yellow;
-    }
-    OPEN_DISPS(play->state.gfxCtx);
-    Retro::Painter p(&OVERLAY_DISP);
-    p.Text(x, y, "◆", c);
-    CLOSE_DISPS(play->state.gfxCtx);
+int Battle_DangerLevel() {
+    return sDanger >= kDangerRed ? 2 : (sDanger >= kDangerYellow ? 1 : 0);
 }
 
 namespace {
@@ -1161,21 +1129,22 @@ void Battle_DrawUi(PlayState* play) {
     bool partyTurn = b.Phase() == BattlePhase::PartyCommand;
     bool blinkOn = (play->gameplayFrames / 4) % 2 == 0;
 
-    // Layout (320x240): turn icons and the moon on top, the message window under them, commands on the left
-    // with lists beside them, the party table along the bottom. The middle is left to the enemies.
-    const int iconY = 8;
-    const int msgX = 10, msgY = 30, msgW = SCREEN_WIDTH - 20;
+    // Layout (320x240), as on the Famicom: turn icons and the moon on a top bar, the 3D scene in a window
+    // (RetroScreen), the message window under it, then commands (two columns) and the party table. Skill,
+    // item and target lists open as windows over the scene.
+    const RetroRect view = kBattleView;
+    const int iconY = 6;
+    const int msgX = 6, msgY = view.y + view.h + 6, msgW = SCREEN_WIDTH - 12, msgH = 28;
     const size_t msgChars = (size_t)(msgW - 28) / kCharW; // after the ▶ marker
     std::vector<std::string> msgLines = Wrap(sScene.message, msgChars);
     if (msgLines.size() > 2) {
         msgLines.resize(2);
     }
-    const int msgH = msgLines.size() > 1 ? 28 : 18;
-    const int partyX = 10, partyY = 190, partyW = SCREEN_WIDTH - 20;
+    const int bottomY = msgY + msgH + 4, bottomH = SCREEN_HEIGHT - 4 - bottomY;
+    const int cmdX = 6, cmdW = 148, cmdY = bottomY, cmdH = bottomH;
+    const int partyX = cmdX + cmdW + 4, partyY = bottomY, partyW = SCREEN_WIDTH - 6 - partyX, partyH = bottomH;
     const int partyRows = (int)std::min<size_t>(b.Party().size(), 3);
-    const int partyH = 8 + (partyRows + 1) * kLineH;
-    const int cmdX = 10, cmdW = 76, cmdH = CMD_COUNT * kLineH + 8, cmdY = partyY - 4 - cmdH;
-    const int listX = cmdX + cmdW + 4, listW = SCREEN_WIDTH - 10 - listX, listBottom = partyY - 4;
+    const int listX = 96, listW = SCREEN_WIDTH - 6 - listX, listBottom = view.y + view.h - 2;
 
     bool commandUi = sScene.ui == Ui::Command || sScene.ui == Ui::Skills || sScene.ui == Ui::Items ||
                      sScene.ui == Ui::TargetEnemy || sScene.ui == Ui::TargetAlly;
@@ -1218,12 +1187,13 @@ void Battle_DrawUi(PlayState* play) {
     const int infoH = (int)infoLines.size() * kLineH + kLineH + 10;
     const int infoY = listY - infoH - 2;
 
-    const int ptsW = 232, ptsH = 128, ptsX = (SCREEN_WIDTH - ptsW) / 2, ptsY = 50;
+    const int ptsW = 232, ptsH = 128, ptsX = (SCREEN_WIDTH - ptsW) / 2, ptsY = view.y + (view.h - ptsH) / 2;
     bool pointsUi = sScene.ui == Ui::StatPoints && sScene.statMember >= 0 &&
                     sScene.statMember < (int)Party_Members().size();
 
     OPEN_DISPS(play->state.gfxCtx);
     Painter p(&OVERLAY_DISP);
+    RetroScreen_DrawFrame(p, view);
 
     if (sScene.damageFlash > 0) {
         p.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, WithAlpha(Red, (u8)(sScene.damageFlash * 18)));
@@ -1246,16 +1216,16 @@ void Battle_DrawUi(PlayState* play) {
     }
     p.Text(10 + icons.Total() * 13 + 4, iconY + 2, partyTurn ? "PRESS TURN" : "ENEMY TURN", White);
     const int moonW = MoonHud_BoxWidth(16);
-    MoonHud_DrawBox(p, SCREEN_WIDTH - 10 - moonW, 4, 16);
+    MoonHud_DrawBox(p, SCREEN_WIDTH - 6 - moonW, 2, 16);
     if (sScene.autoBattle) {
-        p.TextRight(SCREEN_WIDTH - 10 - moonW - 6, iconY + 2, "AUTO B:STOP", Green);
+        p.TextRight(SCREEN_WIDTH - 6 - moonW - 6, iconY + 2, "AUTO B:STOP", Green);
     }
 
-    // ---- Message window
+    // ---- Message window (always there, like the Famicom's; empty between messages)
+    p.Window(msgX, msgY, msgW, msgH);
+    p.Text(msgX + 8, msgY + 6, "▶", Green);
     if (sScene.showingMessage) {
         Color mc = FromPacked(sScene.messageColor, White);
-        p.Window(msgX, msgY, msgW, msgH);
-        p.Text(msgX + 8, msgY + 6, "▶", Green);
         for (size_t i = 0; i < msgLines.size(); i++) {
             p.Text(msgX + 20, msgY + 6 + (int)i * kLineH, msgLines[i], mc);
         }
@@ -1264,18 +1234,16 @@ void Battle_DrawUi(PlayState* play) {
         }
     }
 
-    // ---- Commands
-    if (commandUi) {
-        p.Window(cmdX, cmdY, cmdW, cmdH);
-        for (int i = 0; i < CMD_COUNT; i++) {
-            bool sel = sScene.ui == Ui::Command && i == sScene.commandCursor;
-            bool enabled = !(i == CMD_RUN && Moon_BlocksEscape()); // no running from a full-moon fight
-            int y = cmdY + 5 + i * kLineH;
-            if (sel) {
-                p.Text(cmdX + 4, y, "▶", Yellow);
-            }
-            p.Text(cmdX + 13, y, Upper(kCommandNames[i]), sel ? Yellow : (enabled ? White : Grey));
+    // ---- Commands: two columns of four (greyed out while messages play)
+    p.Window(cmdX, cmdY, cmdW, cmdH);
+    for (int i = 0; i < CMD_COUNT; i++) {
+        bool sel = commandUi && sScene.ui == Ui::Command && i == sScene.commandCursor;
+        bool enabled = commandUi && !(i == CMD_RUN && Moon_BlocksEscape()); // no running at Full Moon
+        int x = cmdX + 4 + (i / 4) * 70, y = cmdY + 6 + (i % 4) * kLineH;
+        if (sel) {
+            p.Text(x, y, "▶", Yellow);
         }
+        p.Text(x + 9, y, Upper(kCommandNames[i]), sel ? Yellow : (enabled ? White : Grey));
     }
 
     // ---- Lists beside the commands
@@ -1349,31 +1317,29 @@ void Battle_DrawUi(PlayState* play) {
         }
     }
 
-    // ---- Party table: NAME LV HP MP COND
+    // ---- Party table: NAME HP MP COND
     p.Window(partyX, partyY, partyW, partyH);
     {
-        int y = partyY + 5;
-        p.Text(partyX + 14, y, "NAME", Green);
-        p.TextRight(partyX + 102, y, "LV", Green);
-        p.TextRight(partyX + 160, y, "HP", Green);
-        p.TextRight(partyX + 212, y, "MP", Green);
-        p.Text(partyX + 232, y, "COND", Green);
+        int y = partyY + 6;
+        p.Text(partyX + 12, y, "NAME", Green);
+        p.TextRight(partyX + 88, y, "HP", Green);
+        p.TextRight(partyX + 116, y, "MP", Green);
+        p.Text(partyX + 122, y, "COND", Green);
         for (int i = 0; i < partyRows; i++) {
             const Combatant& c = b.Party()[i];
-            y = partyY + 5 + (i + 1) * kLineH;
+            y = partyY + 6 + (i + 1) * kLineH;
             bool isActive = partyTurn && commandUi && i == b.ActivePartyMember();
             Color nameColor = isActive ? Yellow : (c.Alive() ? White : Grey);
             if (isActive) {
-                p.Text(partyX + 4, y, "▶", Yellow);
+                p.Text(partyX + 3, y, "▶", Yellow);
             }
-            p.Text(partyX + 14, y, Fit(Upper(c.name), 8), nameColor);
-            p.TextRight(partyX + 102, y, std::to_string(c.level), White);
-            p.TextRight(partyX + 160, y, std::to_string(c.hp), c.hp * 4 <= c.maxHp ? Red : White);
-            p.TextRight(partyX + 212, y, std::to_string(c.mp), White);
+            p.Text(partyX + 12, y, Fit(Upper(c.name), 6), nameColor);
+            p.TextRight(partyX + 88, y, std::to_string(c.hp), c.hp * 4 <= c.maxHp ? Red : White);
+            p.TextRight(partyX + 116, y, std::to_string(c.mp), White);
             std::string cond;
             Color cc;
             Condition(c, cond, cc);
-            p.Text(partyX + 232, y, cond, cc);
+            p.Text(partyX + 122, y, cond, cc);
         }
     }
 

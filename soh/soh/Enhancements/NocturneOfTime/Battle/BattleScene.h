@@ -20,7 +20,8 @@ void Battle_Update(PlayState* play, Player* player, void* input);
 void Battle_DrawUi(PlayState* play);
 
 // The encounter danger gem beside the automap (blue, yellow, red).
-void Battle_DrawDangerGem(PlayState* play, int x, int y);
+// How close the next encounter is: 0 calm, 1 alert, 2 danger (the HUD's gem).
+int Battle_DangerLevel();
 
 // Abandon any battle without results (scene change, crawler switched off).
 void Battle_Abort();

@@ -50,6 +50,10 @@ class Painter {
     explicit Painter(void* gfxPtrPtr);
 
     void Rect(int x, int y, int w, int h, Color c);
+    // The whole screen, out to both widescreen edges
+    void FillScreen(Color c);
+    static int ScreenLeft();  // x of the screen's left edge (negative in widescreen)
+    static int ScreenRight(); // x of the right edge (past 320 in widescreen)
     // Black window with a 2px rule, Famicom style
     void Window(int x, int y, int w, int h, Color rule = White, uint8_t fillAlpha = 235);
     void Text(int x, int y, const std::string& s, Color c);

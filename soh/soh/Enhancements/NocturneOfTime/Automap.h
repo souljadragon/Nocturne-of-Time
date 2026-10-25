@@ -11,7 +11,8 @@ void Automap_Update(PlayState* play, Player* player);
 // Switch between the corner map and the large centred map.
 void Automap_ToggleLarge();
 
-// Draw the automap (corner window, or the large centred map). The retro field HUD calls this.
-void Automap_Draw(PlayState* play);
+// Draw the automap: in its own window filling the square box at (x, y), or the large map centred on screen
+// when it is toggled on. The retro field HUD calls this.
+void Automap_Draw(PlayState* play, int x, int y, int size);
 // Is the large map up?
 bool Automap_IsLarge();

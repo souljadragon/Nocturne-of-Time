@@ -13,7 +13,7 @@ void MoonHud_OnStep();
 void MoonHud_Tick();
 // Width of the moon window for a sprite of `size` pixels.
 int MoonHud_BoxWidth(int size);
-// A line about the moon for a few seconds after the phase changes ("The moon waxes."), else nullptr.
+// A message for a few seconds after the moon turns full, else nullptr.
 const char* MoonHud_NoticeText();
 // Draw the moon window with its top-left at (x, y). Height is size + 4.
-void MoonHud_DrawBox(Retro::Painter& p, int x, int y, int size);
+void MoonHud_DrawBox(Retro::Painter& p, int x, int y, int size, int width = 0);

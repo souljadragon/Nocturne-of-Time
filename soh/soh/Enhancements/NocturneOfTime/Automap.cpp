@@ -17,6 +17,7 @@
 #include "soh/frame_interpolation.h"
 
 #include <math.h>
+#include <algorithm>
 #include <unordered_map>
 
 extern "C" {
@@ -113,22 +114,22 @@ constexpr Retro::Color kPlayer = Retro::Yellow;
 
 // Outside the anonymous namespace: OPEN_DISPS declares FrameInterpolation helpers at block scope, which must
 // resolve to the global extern "C" functions.
-void Automap_Draw(PlayState* play) {
+void Automap_Draw(PlayState* play, int boxX, int boxY, int boxSize) {
     Player* player = GET_PLAYER(play);
     auto sceneIt = sMaps.find(play->sceneNum);
     CellKey here = KeyFor(player->actor.world.pos);
 
-    const s32 radius = sLarge ? 12 : 4;        // tiles shown each side of Link
-    const s32 cellPx = sLarge ? 8 : 6;          // screen pixels per tile
+    const s32 radius = sLarge ? 12 : 4; // tiles shown each side of Link
+    // screen pixels per tile: the corner map fills its box (inside a 4px window edge)
+    const s32 cellPx = sLarge ? 8 : std::max(4, (boxSize - 8) / (2 * radius + 1));
     const s32 sizePx = (2 * radius + 1) * cellPx;
     s32 x0, y0;
     if (sLarge) {
         x0 = SCREEN_WIDTH / 2 - sizePx / 2;
         y0 = SCREEN_HEIGHT / 2 - sizePx / 2;
     } else {
-        // top right, under the moon window
-        x0 = OTRGetRectDimensionFromRightEdge((f32)(SCREEN_WIDTH - 14 - sizePx));
-        y0 = 50;
+        x0 = boxX + (boxSize - sizePx) / 2;
+        y0 = boxY + (boxSize - sizePx) / 2;
     }
 
     OPEN_DISPS(play->state.gfxCtx);
@@ -136,7 +137,11 @@ void Automap_Draw(PlayState* play) {
     auto rect = [&](s32 x, s32 y, s32 w, s32 h, Retro::Color c) { p.Rect(x, y, w, h, c); };
 
     // Black window with a white rule
-    p.Window(x0 - 4, y0 - 4, sizePx + 8, sizePx + 8);
+    if (sLarge) {
+        p.Window(x0 - 4, y0 - 4, sizePx + 8, sizePx + 8);
+    } else {
+        p.Window(boxX, boxY, boxSize, boxSize);
+    }
 
     // Screen up is -Z (north), screen right is +X.
     if (sceneIt != sMaps.end()) {
@@ -196,9 +201,7 @@ void Automap_Draw(PlayState* play) {
             break;
     }
 
-    // The encounter gem sits just above the map
     CLOSE_DISPS(play->state.gfxCtx);
-    Battle_DrawDangerGem(play, x0 - 4, y0 - 14);
 }
 
 namespace {

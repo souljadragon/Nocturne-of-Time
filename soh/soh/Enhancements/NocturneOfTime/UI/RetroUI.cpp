@@ -6,6 +6,8 @@
 
 extern "C" {
 #include "global.h"
+int16_t OTRGetRectDimensionFromLeftEdge(float v);
+int16_t OTRGetRectDimensionFromRightEdge(float v);
 }
 
 namespace Retro {
@@ -192,7 +194,20 @@ void Painter::Rect(int x, int y, int w, int h, Color c) {
     UseFill();
     gDPPipeSync(GFX++);
     gDPSetPrimColor(GFX++, 0, 0, c.r, c.g, c.b, c.a);
-    gDPFillRectangle(GFX++, x, y, x + w, y + h);
+    // the wide form takes coordinates left of 0 and right of 320 (widescreen), unlike gDPFillRectangle
+    gDPFillWideRectangle(GFX++, x, y, x + w, y + h);
+}
+
+int Painter::ScreenLeft() {
+    return OTRGetRectDimensionFromLeftEdge(0.0f);
+}
+
+int Painter::ScreenRight() {
+    return OTRGetRectDimensionFromRightEdge((float)SCREEN_WIDTH);
+}
+
+void Painter::FillScreen(Color c) {
+    Rect(ScreenLeft(), 0, ScreenRight() - ScreenLeft(), SCREEN_HEIGHT, c);
 }
 
 void Painter::Window(int x, int y, int w, int h, Color rule, uint8_t fillAlpha) {
@@ -213,11 +228,11 @@ void Painter::Text(int x, int y, const std::string& s, Color c) {
     int cx = x;
     for (size_t i = 0; i < s.size();) {
         uint32_t cp = Next(s, i);
-        if (cp != ' ' && cx >= 0 && y >= 0) {
+        if (cp != ' ') {
             int cell = Cell(cp);
             int s0 = (cell % 16) * 8, t0 = (cell / 16) * 8;
-            gSPTextureRectangle(GFX++, cx << 2, y << 2, (cx + 8) << 2, (y + 8) << 2, G_TX_RENDERTILE, s0 << 5,
-                                t0 << 5, 1 << 10, 1 << 10);
+            gSPWideTextureRectangle(GFX++, cx << 2, y << 2, (cx + 8) << 2, (y + 8) << 2, G_TX_RENDERTILE, s0 << 5,
+                                    t0 << 5, 1 << 10, 1 << 10);
         }
         cx += kCharW;
     }

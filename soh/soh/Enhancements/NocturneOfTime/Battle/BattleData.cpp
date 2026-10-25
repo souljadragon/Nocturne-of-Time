@@ -236,6 +236,20 @@ int XpForLevel(int level) {
     return total;
 }
 
+float XpRate(const std::string& name) {
+    if (name == "Link") {
+        return 1.0f; // the hero
+    }
+    if (name == "Saria") {
+        return 1.18f;
+    }
+    return 1.12f; // later companions: tuned as they join
+}
+
+int XpForLevel(int level, const std::string& name) {
+    return (int)(XpForLevel(level) * XpRate(name) + 0.5f);
+}
+
 int ScaledXp(int baseXp, int memberLevel, int enemyLevel) {
     int above = memberLevel - enemyLevel;
     float scale = 1.0f;

@@ -237,6 +237,25 @@ static void TestLevels() {
     CHECK(ScaledXp(100, 20, 4) == 55);
     CHECK(ScaledXp(100, 4, 8) == 125);
     CHECK(ScaledXp(1, 50, 1) == 1);
+    // Each member has their own pace: the same EXP levels Link and Saria at different times
+    CHECK(XpForLevel(10, "Link") == XpForLevel(10));
+    CHECK(XpForLevel(10, "Saria") > XpForLevel(10, "Link"));
+    {
+        int xp = XpForLevel(5, "Link"), xpS = XpForLevel(5, "Saria"), lvL = 5, lvS = 5, apart = 0;
+        for (int battle = 0; battle < 60; battle++) {
+            xp += 50;
+            xpS += 50;
+            while (xp >= XpForLevel(lvL + 1, "Link")) {
+                lvL++;
+            }
+            while (xpS >= XpForLevel(lvS + 1, "Saria")) {
+                lvS++;
+            }
+            apart += lvL != lvS;
+        }
+        CHECK(apart > 10); // often a level apart
+        CHECK(lvL >= lvS && lvL - lvS <= 2);
+    }
 }
 
 static void TestLevelUpPoints() {

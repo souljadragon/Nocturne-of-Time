@@ -18,6 +18,13 @@ int XpForLevel(int level);
 // XP still needed to go from `level` to `level + 1`.
 int XpToNext(int level);
 
+// Each party member levels at their own pace, as each demon does in SMT (companions level more slowly than
+// the hero): the EXP they need is the curve above times their rate. The same battle EXP then levels them at
+// different times.
+float XpRate(const std::string& name);
+// Total XP `name` needs to reach `level`.
+int XpForLevel(int level, const std::string& name);
+
 // XP a party member earns from one enemy: full value near its level, less when far above it (as in SMT III,
 // which cuts XP by about a quarter beyond 5 levels and by almost half beyond 11).
 int ScaledXp(int baseXp, int memberLevel, int enemyLevel);

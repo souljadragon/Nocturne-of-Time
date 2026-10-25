@@ -107,7 +107,7 @@ std::string JoinLines(const std::vector<std::string>& lines) {
 }
 
 struct Buttons {
-    bool up = false, down = false, a = false, b = false, r = false, z = false;
+    bool up = false, down = false, left = false, right = false, a = false, b = false, r = false, z = false;
 };
 
 Buttons Read(Input* input) {
@@ -117,11 +117,17 @@ Buttons Read(Input* input) {
         dir = 1;
     } else if (input->cur.stick_y < -45) {
         dir = 2;
+    } else if (input->cur.stick_x < -45) {
+        dir = 3;
+    } else if (input->cur.stick_x > 45) {
+        dir = 4;
     }
     bool newStick = dir != 0 && dir != sMenu.stickDir;
     sMenu.stickDir = dir;
     out.up = (input->press.button & BTN_DUP) || (newStick && dir == 1);
     out.down = (input->press.button & BTN_DDOWN) || (newStick && dir == 2);
+    out.left = (input->press.button & BTN_DLEFT) || (newStick && dir == 3);
+    out.right = (input->press.button & BTN_DRIGHT) || (newStick && dir == 4);
     out.a = input->press.button & BTN_A;
     out.b = input->press.button & BTN_B;
     out.r = input->press.button & BTN_R;
@@ -207,8 +213,8 @@ void EquipMenu_Update(void* inputPtr) {
 
     switch (sMenu.page) {
         case Page::Members:
-            if (in.up || in.down) {
-                Move(sMenu.member, (int)members.size() + 1, in.up); // + the Items row
+            if (in.left || in.right) {
+                Move(sMenu.member, (int)members.size() + 1, in.left); // the tabs: members, then ITEMS
             } else if (in.a) {
                 if (OnItemsRow()) {
                     if (OwnedConsumables().empty()) {
@@ -439,7 +445,7 @@ static void DrawItemsView(PlayState* play) {
 
     OPEN_DISPS(play->state.gfxCtx);
     Painter p(&OVERLAY_DISP);
-    p.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Black);
+    p.FillScreen(Black);
     DrawTabs(p, (int)members.size());
 
     // Header with the little green boxes, as on the Famicom screen
@@ -513,7 +519,7 @@ static void DrawItemsView(PlayState* play) {
         }
     }
 
-    const char* hint = sMenu.page == Page::Members ? "A:CHOOSE  B:CLOSE"
+    const char* hint = sMenu.page == Page::Members ? "◀▶:TAB  A:CHOOSE  B:CLOSE"
                        : sMenu.page == Page::Use     ? "A:USE  B:BACK"
                                                      : "A:GIVE  B:BACK";
     p.Text(14, 226, hint, Grey);
@@ -540,7 +546,7 @@ void EquipMenu_Draw(PlayState* play) {
 
     OPEN_DISPS(play->state.gfxCtx);
     Painter p(&OVERLAY_DISP);
-    p.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Black);
+    p.FillScreen(Black);
     DrawTabs(p, sMenu.member);
 
     // ---- Portrait in a white frame, name and level, stats on bars
@@ -562,7 +568,7 @@ void EquipMenu_Draw(PlayState* play) {
     // ---- EXP and points to the next level
     {
         int y = 92;
-        int lvStart = XpForLevel(m.base.level), lvNext = XpForLevel(m.base.level + 1);
+        int lvStart = XpForLevel(m.base.level, m.base.name), lvNext = XpForLevel(m.base.level + 1, m.base.name);
         Diamond(p, 34, y);
         p.Text(46, y, "EXP", White);
         p.TextRight(146, y, std::to_string(m.xp) + "Pts.", White);
@@ -761,7 +767,7 @@ void EquipMenu_Draw(PlayState* play) {
         }
     }
 
-    const char* hint = sMenu.page == Page::Members ? "A:EQUIP  B:CLOSE"
+    const char* hint = sMenu.page == Page::Members ? "◀▶:TAB  A:EQUIP  B:CLOSE"
                        : sMenu.page == Page::Slots ? (sMenu.showLore ? "A:CHANGE B:BACK Z:STATS"
                                                                      : "A:CHANGE B:BACK Z:LORE")
                                                    : (sMenu.showLore ? "A:EQUIP B:BACK Z:STATS"

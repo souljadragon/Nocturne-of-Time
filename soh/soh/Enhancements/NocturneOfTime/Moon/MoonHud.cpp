@@ -23,7 +23,7 @@ using namespace Nocturne;
 
 namespace {
 
-constexpr int kNoticeFrames = 60; // the window pulses this long after a change (20 frames = 1 second)
+constexpr int kNoticeFrames = 100; // pulse / Full Moon message length after a change (20 frames = 1 second)
 int sNotice = 0;
 
 const char* ShortName(MoonPhase p) {
@@ -77,27 +77,21 @@ const char* MoonHud_NoticeText() {
     if (sNotice <= 0) {
         return nullptr;
     }
-    switch (Moon_Phase()) {
-        case MoonPhase::Full:
-            return "FULL MOON! Beware.";
-        case MoonPhase::New:
-            return "NEW MOON. All is calm.";
-        default:
-            return Moon_Waxing() ? "The moon waxes." : "The moon wanes.";
-    }
+    // Only the Full Moon is announced; other changes just pulse the moon window
+    return Moon_Phase() == MoonPhase::Full ? "The moon is full! Monsters stir." : nullptr;
 }
 
 int MoonHud_BoxWidth(int size) {
     return 4 + size + 4 + 4 * Retro::kCharW + 4; // rule, sprite, gap, up to four letters, rule
 }
 
-void MoonHud_DrawBox(Retro::Painter& p, int x, int y, int size) {
+void MoonHud_DrawBox(Retro::Painter& p, int x, int y, int size, int width) {
     bool full = Moon_Phase() == MoonPhase::Full;
     Retro::Color rule = full ? Retro::Violet : Retro::White;
     if (sNotice > 0 && (sNotice / 6) % 2 == 0) {
         rule = Retro::Violet; // pulse after a change
     }
-    int w = MoonHud_BoxWidth(size), h = size + 4;
+    int w = width > 0 ? width : MoonHud_BoxWidth(size), h = size + 4;
     p.Window(x, y, w, h, rule);
     p.Moon((int)Moon_Phase(), x + 3, y + 2, size);
     p.Text(x + 4 + size + 4, y + (h - 7) / 2, ShortName(Moon_Phase()), full ? Retro::Violet : Retro::White);
