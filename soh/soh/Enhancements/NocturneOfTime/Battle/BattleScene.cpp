@@ -59,8 +59,8 @@ constexpr int kMaxDrops = 2;         // per battle
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
-constexpr f32 kBossDistance = 380.0f;    // Queen Gohma stands further back: she's big
-constexpr f32 kBossMinDistance = 220.0f;
+constexpr f32 kBossDistance = 250.0f;    // Queen Gohma stands further back: she's big
+constexpr f32 kBossMinDistance = 200.0f;
 // Her arena, from the vanilla fight: the room's centre, and the entrance where her cutscene starts
 constexpr f32 kArenaCentreX = -150.0f, kArenaCentreZ = -350.0f;
 constexpr f32 kArenaEntranceX = 150.0f, kArenaEntranceZ = 350.0f;
@@ -535,8 +535,9 @@ void SpawnJoiningEnemy(PlayState* play, int index) {
     const Combatant& c = sScene.battle->Enemies()[index];
     int k = index - 1; // the queen is enemy 0
     // Out from under her, to either side and nearer the camera, so they're in plain view
-    static const f32 kLateral[] = { -125.0f, 125.0f, -200.0f, 200.0f, 0.0f };
-    static const f32 kCloser[] = { 130.0f, 130.0f, 60.0f, 60.0f, 190.0f };
+    // (all well inside the view: about 25-35 degrees off centre at most)
+    static const f32 kLateral[] = { -75.0f, 75.0f, -140.0f, 140.0f, 0.0f };
+    static const f32 kCloser[] = { 90.0f, 90.0f, 30.0f, 30.0f, 150.0f };
     int slot = std::clamp(k, 0, 4);
     f32 d = std::max(60.0f, sScene.dist - kCloser[slot]);
     Vec3f pos = { sScene.origin.x + sScene.fwd.x * d + sScene.right.x * kLateral[slot], sScene.origin.y,

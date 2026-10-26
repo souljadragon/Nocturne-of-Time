@@ -84,7 +84,7 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
             SkelAnime_Init(play, &self->skelAnime, (SkeletonHeader*)gGohmaSkel, self->idle, self->jointTable,
                            self->morphTable, kGohmaLimbs);
             PlayIdle(self, 0.0f);
-            self->baseScale = 0.006f; // 60% of her size in OoT, so she fits the first-person view
+            self->baseScale = 0.01f; // her size in OoT; the battle stands her far enough back to fit the view
             self->defeatFrames = kBossDefeatFrames;
             break;
         case Nocturne::EnemyKind::GohmaLarva:

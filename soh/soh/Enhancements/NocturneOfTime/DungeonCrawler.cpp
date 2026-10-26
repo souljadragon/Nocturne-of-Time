@@ -87,6 +87,7 @@ struct CrawlerState {
     s16 yawTo = 0;
     Vec3f bumpDir = { 0.0f, 0.0f, 0.0f };
     f32 bumpAmount = 0.0f;
+    bool needCentre = false; // centre Link in the corridor once he's on the ground (see CentreInCorridor)
 };
 
 CrawlerState sCrawler;
@@ -327,9 +328,37 @@ void Activate(Player* player) {
                             roundf(player->actor.world.pos.z / kTileSize) * kTileSize };
     sCrawler.facing = YawToFacing(player->actor.shape.rot.y);
     sCrawler.curYaw = player->actor.shape.rot.y;
+    // Gohma's lair isn't laid out on the 80-unit grid: line the grid up with its corridors instead
+    sCrawler.needCentre = gPlayState != NULL && gPlayState->sceneNum == SCENE_DEKU_TREE_BOSS;
     // Ease from wherever Link was facing onto the grid
     StartTurn(FacingToYaw(sCrawler.facing));
     player->actor.shape.shadowDraw = NULL;
+}
+
+// Between two walls (a corridor), move Link to the middle and run the grid through that line, so steps stay
+// centred. Only along an axis with walls close on both sides; open floor keeps the usual grid.
+void CentreInCorridor(PlayState* play, Player* player) {
+    const f32 kReach = 200.0f;
+    Vec3f pos = player->actor.world.pos;
+    for (int axis = 0; axis < 2; axis++) {
+        Vec3f plus = axis == 0 ? Vec3f{ 1.0f, 0.0f, 0.0f } : Vec3f{ 0.0f, 0.0f, 1.0f };
+        Vec3f minus = { -plus.x, 0.0f, -plus.z };
+        WallHit a = ProbeWalls(play, pos, plus, kReach);
+        WallHit b = ProbeWalls(play, pos, minus, kReach);
+        if (!a.hit || !b.hit) {
+            continue;
+        }
+        f32 shift = (a.dist - b.dist) * 0.5f;
+        if (axis == 0) {
+            pos.x += shift;
+            sCrawler.gridOrigin.x = pos.x;
+        } else {
+            pos.z += shift;
+            sCrawler.gridOrigin.z = pos.z;
+        }
+    }
+    player->actor.world.pos.x = pos.x;
+    player->actor.world.pos.z = pos.z;
 }
 
 void Deactivate(Player* player) {
@@ -420,6 +449,10 @@ bool OnFilterInput(Player* player, Input* input) {
     ClearMovementInput(input);
 
     bool airborne = (player->stateFlags1 & kAirborneFlags1) || !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND);
+    if (sCrawler.needCentre && !airborne && sCrawler.action == Action::None) {
+        sCrawler.needCentre = false;
+        CentreInCorridor(play, player);
+    }
 
     // Holding a direction keeps walking/turning, one tile or quarter turn at a time
     if (sCrawler.action == Action::None && !airborne) {

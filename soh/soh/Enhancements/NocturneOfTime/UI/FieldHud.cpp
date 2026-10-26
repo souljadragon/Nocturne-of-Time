@@ -20,6 +20,7 @@
 #include "../Moon/Moon.h"
 #include "../Boss/BossGate.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -113,14 +114,19 @@ static void DrawFieldHud(PlayState* play) {
 
         // Top bar
         const int barY = 8;
-        p.Text(8, barY, SceneTitle(play), White);
-        p.Text(96, barY, "FACING", Green);
-        p.Text(96 + 7 * kCharW, barY, FacingName(DungeonCrawler_GetFacing()), Yellow);
-        static const char* kDanger[3] = { "CALM", "ALERT", "DANGER" };
-        static const Color kDangerColor[3] = { Blue, Yellow, Red };
-        int level = Battle_DangerLevel();
-        p.Text(176, barY, "◆", kDangerColor[level]);
-        p.Text(188, barY, kDanger[level], kDangerColor[level]);
+        // Long place names push FACING along; boss chambers have no encounters, so no danger meter there
+        const char* title = SceneTitle(play);
+        int facingX = std::max(96, 8 + (int)Length(title) * kCharW + kCharW);
+        p.Text(8, barY, title, White);
+        p.Text(facingX, barY, "FACING", Green);
+        p.Text(facingX + 7 * kCharW, barY, FacingName(DungeonCrawler_GetFacing()), Yellow);
+        if (play->sceneNum != SCENE_DEKU_TREE_BOSS) {
+            static const char* kDanger[3] = { "CALM", "ALERT", "DANGER" };
+            static const Color kDangerColor[3] = { Blue, Yellow, Red };
+            int level = Battle_DangerLevel();
+            p.Text(176, barY, "◆", kDangerColor[level]);
+            p.Text(188, barY, kDanger[level], kDangerColor[level]);
+        }
         const int moonW = MoonHud_BoxWidth(16);
         MoonHud_DrawBox(p, SCREEN_WIDTH - 6 - moonW, 2, 16);
     }
