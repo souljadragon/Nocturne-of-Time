@@ -61,7 +61,12 @@ constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 constexpr f32 kBossDistance = 380.0f;    // Queen Gohma stands further back: she's big
 constexpr f32 kBossMinDistance = 220.0f;
-constexpr f32 kArenaTrigger = 520.0f;    // the fight starts once Link is in her chamber, this close to its centre
+// Her arena, from the vanilla fight: the room's centre, and the entrance where her cutscene starts
+constexpr f32 kArenaCentreX = -150.0f, kArenaCentreZ = -350.0f;
+constexpr f32 kArenaEntranceX = 150.0f, kArenaEntranceZ = 350.0f;
+constexpr f32 kArenaEntranceBox = 70.0f; // OoT uses 60; a little slack for the crawler's grid
+// Where the party stands for the fight: on the grid, south of the centre, looking north across the room
+constexpr f32 kArenaStandX = -160.0f, kArenaStandZ = 160.0f;
 constexpr int kHeartContainerHp = 8;     // max HP for everyone when a boss falls
 
 enum class Ui { None, BossIntro, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
@@ -126,7 +131,6 @@ bool sBossDone = false; // this visit's boss fight is over (the warp out is unde
 bool sArenaKnown = false;
 s8 sArenaRoom = -1;
 Vec3f sArenaPos = { 0.0f, 0.0f, 0.0f };
-s8 sStartRoom = -1; // the room Link arrived in (the corridor), if the chamber isn't known
 
 // The boss's entrance (Ui::BossIntro): she hangs from the ceiling, the view tilts up to her, she drops and lands,
 // then her title card
@@ -219,9 +223,10 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     s8 bestFacing = DungeonCrawler_GetFacing();
     f32 bestDist = 0.0f;
     f32 bestScore = roomAt(bestFacing, bestDist) + 30.0f; // a little bias toward the current facing
-    if (boss && sArenaKnown) {
+    if (boss) {
         // Face the middle of her chamber (to the nearest quarter turn)
-        s16 toCentre = Math_Atan2S(sArenaPos.z - player->actor.world.pos.z, sArenaPos.x - player->actor.world.pos.x);
+        s16 toCentre =
+            Math_Atan2S(kArenaCentreZ - player->actor.world.pos.z, kArenaCentreX - player->actor.world.pos.x);
         bestFacing = (s8)((((u16)toCentre + 0x2000) >> 14) & 3);
     }
     for (s8 f = 0; f < 4 && !boss; f++) {
@@ -1300,7 +1305,6 @@ void RegisterBattleScene() {
         sScene.queue.clear();
         sScene.boss = false;
         sBossDone = false;
-        sStartRoom = -1;
         sDanger = 0;
         // Coming into a new area patches the party up (Sheikah Stones and inns come later)
         if (sceneNum != sLastScene) {
@@ -1362,17 +1366,20 @@ void Battle_FieldTick(PlayState* play, Player* player) {
     if (!(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) {
         return;
     }
-    if (sStartRoom < 0) {
-        sStartRoom = player->actor.room;
-    }
-    bool inChamber;
-    if (sArenaKnown) {
-        f32 dx = player->actor.world.pos.x - sArenaPos.x, dz = player->actor.world.pos.z - sArenaPos.z;
-        inChamber = player->actor.room == sArenaRoom && dx * dx + dz * dz < kArenaTrigger * kArenaTrigger;
-    } else {
-        inChamber = player->actor.room != sStartRoom; // she wasn't seen: any room past the corridor
-    }
-    if (inChamber) {
+    // (the same spot OoT watches for: the doorway every way in passes through)
+    const Vec3f& pos = player->actor.world.pos;
+    bool atEntrance =
+        fabsf(pos.x - kArenaEntranceX) < kArenaEntranceBox && fabsf(pos.z - kArenaEntranceZ) < kArenaEntranceBox;
+    if (atEntrance) {
+        // Step into the open floor of the arena, facing its centre, for her entrance
+        Vec3f stand = { kArenaStandX, pos.y + 40.0f, kArenaStandZ };
+        CollisionPoly* poly;
+        s32 bgId;
+        f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &stand);
+        if (floorY > BGCHECK_Y_MIN + 1.0f && fabsf(floorY - pos.y) < 60.0f) {
+            player->actor.world.pos = { kArenaStandX, floorY, kArenaStandZ };
+            player->actor.prevPos = player->actor.world.pos;
+        }
         StartBossBattle(play, player);
     }
 }
