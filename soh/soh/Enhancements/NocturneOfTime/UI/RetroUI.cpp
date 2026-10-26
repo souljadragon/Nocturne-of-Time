@@ -219,9 +219,18 @@ void Painter::Window(int x, int y, int w, int h, Color rule, uint8_t fillAlpha) 
 }
 
 void Painter::Text(int x, int y, const std::string& s, Color c) {
+    TextScaled(x, y, s, c, 1);
+}
+
+void Painter::TextCenterScaled(int centerX, int y, const std::string& s, Color c, int scale) {
+    TextScaled(centerX - (int)Length(s) * kCharW * scale / 2, y, s, c, scale);
+}
+
+void Painter::TextScaled(int x, int y, const std::string& s, Color c, int scale) {
     if (s.empty()) {
         return;
     }
+    scale = scale < 1 ? 1 : scale;
     UseFont();
     gDPPipeSync(GFX++);
     gDPSetPrimColor(GFX++, 0, 0, c.r, c.g, c.b, c.a);
@@ -231,10 +240,10 @@ void Painter::Text(int x, int y, const std::string& s, Color c) {
         if (cp != ' ') {
             int cell = Cell(cp);
             int s0 = (cell % 16) * 8, t0 = (cell / 16) * 8;
-            gSPWideTextureRectangle(GFX++, cx << 2, y << 2, (cx + 8) << 2, (y + 8) << 2, G_TX_RENDERTILE, s0 << 5,
-                                    t0 << 5, 1 << 10, 1 << 10);
+            gSPWideTextureRectangle(GFX++, cx << 2, y << 2, (cx + 8 * scale) << 2, (y + 8 * scale) << 2,
+                                    G_TX_RENDERTILE, s0 << 5, t0 << 5, (1 << 10) / scale, (1 << 10) / scale);
         }
-        cx += kCharW;
+        cx += kCharW * scale;
     }
 }
 

@@ -539,3 +539,7 @@ void DungeonCrawler_SetFacing(signed char facing) {
 }
 
 static RegisterShipInitFunc initFunc(RegisterDungeonCrawler, { CVAR_CRAWLER_NAME });
+
+void DungeonCrawler_SetPitch(short pitch) {
+    sCrawler.pitch = pitch;
+}

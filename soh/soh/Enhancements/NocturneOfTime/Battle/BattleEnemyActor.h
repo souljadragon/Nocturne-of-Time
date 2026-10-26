@@ -22,5 +22,6 @@ void BattleEnemyActor_SetFast(bool fast);
 void BattleEnemyActor_SetSize(Actor* actor, float factor);
 
 // One-off animations (Queen Gohma and her larvae have them; other enemies keep their idle).
-enum class BattleAnim { Attack, Hurt, Special };
+enum class BattleAnim { Attack, Hurt, Special, Hang, Land };
+// Hang: loops Gohma's ceiling pose; Land: her landing, then back to her idle.
 void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim);

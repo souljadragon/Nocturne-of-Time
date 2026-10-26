@@ -23,7 +23,7 @@ namespace {
 
 constexpr int kMaxLimbs = 90; // Queen Gohma has 86
 constexpr s16 kDefeatFrames = 12;
-constexpr s16 kBossDefeatFrames = 40;
+constexpr s16 kBossDefeatFrames = 60;
 constexpr int kGohmaLimbs = 86;  // BOSSGOMA_LIMB_MAX
 constexpr int kLarvaLimbs = 24;  // GOMA_LIMB_MAX
 constexpr s32 kGohmaLimbEye = 5; // BOSSGOMA_LIMB_EYE
@@ -92,7 +92,7 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
             SkelAnime_Init(play, &self->skelAnime, (SkeletonHeader*)gObjectGolSkel, self->idle, self->jointTable,
                            self->morphTable, kLarvaLimbs);
             PlayIdle(self, 0.0f);
-            self->baseScale = 0.01f;
+            self->baseScale = 0.015f; // a bit bigger than in OoT, to read at battle distance
             break;
         case Nocturne::EnemyKind::FireKeese:
         default:
@@ -322,7 +322,13 @@ Actor* BattleEnemyActor_Spawn(PlayState* play, int kind, float x, float groundY,
 void BattleEnemyActor_Defeat(Actor* actor) {
     BattleEnemy* self = (BattleEnemy*)actor;
     if (self->defeatTimer == 0 && !self->gone) {
-        self->defeatTimer = kDefeatFrames;
+        self->defeatTimer = self->defeatFrames;
+        if (actor->params == (s16)Nocturne::EnemyKind::QueenGohma) {
+            // Her death throes while she shrinks away
+            Animation_Change(&self->skelAnime, (AnimationHeader*)gGohmaDeathAnim, 1.0f, 0.0f,
+                             Animation_GetLastFrame(gGohmaDeathAnim), ANIMMODE_ONCE, -4.0f);
+            self->playingOnce = false;
+        }
     }
 }
 
@@ -352,9 +358,16 @@ void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim) {
     AnimationHeader* once = NULL;
     switch ((Nocturne::EnemyKind)actor->params) {
         case Nocturne::EnemyKind::QueenGohma:
+            if (anim == BattleAnim::Hang) {
+                Animation_Change(&self->skelAnime, (AnimationHeader*)gGohmaHangAnim, 1.0f, 0.0f,
+                                 Animation_GetLastFrame(gGohmaHangAnim), ANIMMODE_LOOP, 0.0f);
+                self->playingOnce = false;
+                return;
+            }
             once = anim == BattleAnim::Attack   ? (AnimationHeader*)gGohmaAttackAnim
                    : anim == BattleAnim::Hurt    ? (AnimationHeader*)gGohmaDamageAnim
                    : anim == BattleAnim::Special ? (AnimationHeader*)gGohmaLayEggsAnim
+                   : anim == BattleAnim::Land    ? (AnimationHeader*)gGohmaInitialLandingAnim
                                                  : NULL;
             break;
         case Nocturne::EnemyKind::GohmaLarva:

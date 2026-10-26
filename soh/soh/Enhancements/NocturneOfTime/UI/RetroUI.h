@@ -59,6 +59,9 @@ class Painter {
     void Text(int x, int y, const std::string& s, Color c);
     void TextRight(int right, int y, const std::string& s, Color c);
     void TextCenter(int centerX, int y, const std::string& s, Color c);
+    // Big text: every glyph drawn `scale` times its size (title cards)
+    void TextScaled(int x, int y, const std::string& s, Color c, int scale);
+    void TextCenterScaled(int centerX, int y, const std::string& s, Color c, int scale);
     // Segmented bar: `segs` blocks, the first `lit` in `on`, the rest in `off`
     void Bar(int x, int y, int segs, int lit, int segW, int segH, int gap, Color on, Color off);
     // An RGBA32 texture drawn pixel-sharp at w x h

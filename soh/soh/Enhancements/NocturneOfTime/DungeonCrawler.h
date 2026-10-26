@@ -10,3 +10,7 @@ signed char DungeonCrawler_GetFacing();
 
 // Turn to face grid direction `facing` (0..3), e.g. so a battle has room in front.
 void DungeonCrawler_SetFacing(signed char facing);
+
+// Tilt the first-person view up (positive) or down, in binary angle units; during battles it stays where it's
+// put (boss cutscenes look up at the ceiling), otherwise the right stick takes over again.
+void DungeonCrawler_SetPitch(short pitch);

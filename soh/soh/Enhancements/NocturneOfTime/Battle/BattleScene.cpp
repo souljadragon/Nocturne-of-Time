@@ -61,10 +61,10 @@ constexpr f32 kEnemyMinDistance = 90.0f;
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 constexpr f32 kBossDistance = 380.0f;    // Queen Gohma stands further back: she's big
 constexpr f32 kBossMinDistance = 220.0f;
-constexpr int kBossStartFrames = 25;     // after landing in the chamber
+constexpr f32 kArenaTrigger = 520.0f;    // the fight starts once Link is in her chamber, this close to its centre
 constexpr int kHeartContainerHp = 8;     // max HP for everyone when a boss falls
 
-enum class Ui { None, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
+enum class Ui { None, BossIntro, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
 
 enum Command { CMD_ATTACK, CMD_SKILL, CMD_ITEM, CMD_GUARD, CMD_PASS, CMD_ANALYZE, CMD_AUTO, CMD_RUN, CMD_COUNT };
 const char* kCommandNames[CMD_COUNT] = { "Attack", "Skill", "Item", "Guard", "Pass", "Analyze", "Auto", "Run" };
@@ -121,8 +121,26 @@ Scene sScene;
 std::set<int> sAnalyzedKinds; // bestiary: enemy kinds whose affinities are known
 int sDanger = 0;
 s16 sLastScene = -1;
-int sBossCountdown = 0; // frames on the chamber floor before the boss appears
 bool sBossDone = false; // this visit's boss fight is over (the warp out is under way)
+// Her chamber: where the vanilla Queen Gohma would have spawned (seen as we stop her), and which room that is
+bool sArenaKnown = false;
+s8 sArenaRoom = -1;
+Vec3f sArenaPos = { 0.0f, 0.0f, 0.0f };
+s8 sStartRoom = -1; // the room Link arrived in (the corridor), if the chamber isn't known
+
+// The boss's entrance (Ui::BossIntro): she hangs from the ceiling, the view tilts up to her, she drops and lands,
+// then her title card
+enum class IntroPhase { LookUp, Watch, Fall, Title };
+struct BossIntro {
+    IntroPhase phase = IntroPhase::LookUp;
+    int timer = 0;
+    f32 floorY = 0.0f, ceilY = 0.0f, fallSpeed = 0.0f;
+    s16 pitch = 0, pitchTarget = 0;
+};
+BossIntro sIntro;
+constexpr int kIntroLookFrames = 30;
+constexpr int kIntroWatchFrames = 26;
+constexpr int kIntroTitleFrames = 70;
 
 void EnsureParty() {
     Party_EnsureCreated(kStartLevel);
@@ -179,6 +197,8 @@ std::vector<EnemyKind> RollEncounter() {
     return kinds;
 }
 
+void BeginBossIntro(PlayState* play);
+
 void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies, bool boss) {
     EnsureParty();
     sScene.boss = boss;
@@ -199,7 +219,12 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     s8 bestFacing = DungeonCrawler_GetFacing();
     f32 bestDist = 0.0f;
     f32 bestScore = roomAt(bestFacing, bestDist) + 30.0f; // a little bias toward the current facing
-    for (s8 f = 0; f < 4; f++) {
+    if (boss && sArenaKnown) {
+        // Face the middle of her chamber (to the nearest quarter turn)
+        s16 toCentre = Math_Atan2S(sArenaPos.z - player->actor.world.pos.z, sArenaPos.x - player->actor.world.pos.x);
+        bestFacing = (s8)((((u16)toCentre + 0x2000) >> 14) & 3);
+    }
+    for (s8 f = 0; f < 4 && !boss; f++) {
         f32 ahead;
         f32 score = roomAt(f, ahead);
         if (f != bestFacing && score > bestScore && ahead >= kEnemyMinDistance + 40.0f) {
@@ -351,16 +376,136 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     sScene.message = enemies.size() == 1 ? "A " + enemies[0].name + " appears!" : "Enemies appear!";
     sScene.messageColor = 0;
     if (boss) {
-        sScene.message = "Queen Gohma, Parasitic Armored Arachnid!\nDefeat her in " +
-                         std::to_string(kGohmaTurnLimit) + " turns!";
-        sScene.messageColor = 0xF8380000u;
-        Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS);
+        sScene.message = "The chamber falls silent...";
+        sScene.messageColor = 0;
+        BeginBossIntro(play);
     } else if (Moon_BlocksEscape()) {
         sScene.message += "\nThe full moon has driven them mad!";
         sScene.messageColor = 0xC8A0FF00u; // violet
     }
     sScene.showingMessage = true;
     PlaySfx(NA_SE_SY_FSEL_DECIDE_L);
+}
+
+// ---- The boss's entrance ---------------------------------------------------------------------------------
+
+f32 CeilingAbove(PlayState* play, const Vec3f& floor) {
+    Vec3f a = { floor.x, floor.y + 60.0f, floor.z };
+    Vec3f b = { floor.x, floor.y + 900.0f, floor.z };
+    Vec3f hit;
+    CollisionPoly* poly;
+    s32 bgId;
+    f32 ceil = floor.y + 320.0f;
+    if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, false, true, true, false, &bgId)) {
+        ceil = hit.y;
+    }
+    // A very high ceiling would hang her out of sight
+    return std::min(ceil, floor.y + 420.0f);
+}
+
+s16 PitchToward(f32 targetY) {
+    f32 dy = targetY - (sScene.origin.y + 58.0f);
+    return (s16)std::clamp<s32>(Math_Atan2S(std::max(1.0f, sScene.dist), dy), -0x1000, 0x3800);
+}
+
+void BeginBossIntro(PlayState* play) {
+    Actor* gohma = sScene.enemyActors.empty() ? NULL : sScene.enemyActors[0];
+    sIntro = BossIntro();
+    sScene.ui = Ui::BossIntro;
+    if (gohma == NULL) {
+        sIntro.phase = IntroPhase::Title;
+        return;
+    }
+    sIntro.floorY = gohma->world.pos.y;
+    sIntro.ceilY = CeilingAbove(play, gohma->world.pos);
+    // Upside down on the ceiling, as in OoT
+    gohma->world.pos.y = sIntro.ceilY - 4.0f;
+    gohma->shape.rot.x = (s16)0x8000;
+    BattleEnemyActor_Animate(gohma, BattleAnim::Hang);
+    sIntro.pitchTarget = PitchToward(sIntro.ceilY - 70.0f);
+    Audio_QueueSeqCmd(0x1 << 28 | SEQ_PLAYER_BGM_MAIN << 24 | 0x100FF); // silence before she appears
+}
+
+void LandGohma(Actor* gohma) {
+    gohma->world.pos.y = sIntro.floorY;
+    gohma->shape.rot.x = 0;
+    if (gPlayState != NULL) {
+        s16 quake = Quake_Add(Play_GetCamera(gPlayState, CAM_ID_MAIN), 3);
+        Quake_SetSpeed(quake, 22000);
+        Quake_SetQuakeValues(quake, 8, 0, 0, 0);
+        Quake_SetCountdown(quake, 14);
+    }
+    Rumble_Request(0.0f, 220, 20, 20);
+    PlaySfx(NA_SE_EN_GOMA_DOWN);
+    PlaySfx(NA_SE_IT_BOMB_EXPLOSION);
+    sIntro.phase = IntroPhase::Title;
+    sIntro.timer = 0;
+    sScene.showingMessage = false;
+}
+
+void UpdateBossIntro(bool skip) {
+    Actor* gohma = sScene.enemyActors.empty() ? NULL : sScene.enemyActors[0];
+    sIntro.timer++;
+    if (skip && sIntro.phase != IntroPhase::Title && gohma != NULL) {
+        BattleEnemyActor_Animate(gohma, BattleAnim::Land);
+        LandGohma(gohma);
+    }
+    switch (sIntro.phase) {
+        case IntroPhase::LookUp: {
+            // Something is up there: the view tilts up to her
+            f32 t = std::min(1.0f, (f32)sIntro.timer / kIntroLookFrames);
+            t = t * t * (3.0f - 2.0f * t);
+            sIntro.pitch = (s16)(sIntro.pitchTarget * t);
+            if (sIntro.timer == 6) {
+                PlaySfx(NA_SE_EN_GOMA_UNARI);
+            }
+            if (sIntro.timer >= kIntroLookFrames) {
+                sIntro.phase = IntroPhase::Watch;
+                sIntro.timer = 0;
+                sScene.message = "A great eye opens above you!";
+                sScene.messageColor = 0xF8380000u;
+                sScene.showingMessage = true;
+                PlaySfx(NA_SE_EN_GOMA_DEMO_EYE);
+            }
+            break;
+        }
+        case IntroPhase::Watch:
+            if (sIntro.timer >= kIntroWatchFrames && gohma != NULL) {
+                sIntro.phase = IntroPhase::Fall;
+                sIntro.timer = 0;
+                BattleEnemyActor_Animate(gohma, BattleAnim::Land);
+                PlaySfx(NA_SE_EN_GOMA_HIGH);
+            }
+            break;
+        case IntroPhase::Fall:
+            if (gohma != NULL) {
+                // Drops like a stone, turning right side up on the way (OoT eases rot.x the same way)
+                sIntro.fallSpeed += 2.0f;
+                gohma->world.pos.y -= sIntro.fallSpeed;
+                Math_ApproachS(&gohma->shape.rot.x, 0, 2, 0xBB8);
+                sIntro.pitch = std::max<s16>(0, PitchToward(gohma->world.pos.y + 40.0f));
+                if (gohma->world.pos.y <= sIntro.floorY) {
+                    LandGohma(gohma);
+                }
+            }
+            break;
+        case IntroPhase::Title:
+            Math_ApproachS(&sIntro.pitch, 0, 3, 0x200); // settle back to eye level for the fight
+            if (sIntro.timer == 8) {
+                PlaySfx(NA_SE_EN_GOMA_CRY1);
+                Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS);
+            }
+            if (sIntro.timer >= kIntroTitleFrames || (skip && sIntro.timer > 12)) {
+                sIntro.pitch = 0;
+                sScene.ui = Ui::Intro;
+                sScene.timer = 0;
+                sScene.message = "Defeat her in " + std::to_string(kGohmaTurnLimit) + " turns!";
+                sScene.messageColor = 0xF8380000u;
+                sScene.showingMessage = true;
+            }
+            break;
+    }
+    DungeonCrawler_SetPitch(sIntro.pitch);
 }
 
 void StartRandomBattle(PlayState* play, Player* player) {
@@ -681,7 +826,9 @@ void PlayEventEffects(const BattleEvent& e) {
                 if (Actor* a = enemyActor(e.target)) {
                     BattleEnemyActor_Defeat(a);
                 }
-                PlaySfx(NA_SE_EN_EXTINCT);
+                bool boss = sScene.battle && e.target >= 0 && e.target < (int)sScene.battle->Enemies().size() &&
+                            sScene.battle->Enemies()[e.target].boss;
+                PlaySfx(boss ? NA_SE_EN_GOMA_DEAD : NA_SE_EN_EXTINCT);
             }
             break;
         case BattleEvent::Type::Analyze:
@@ -1137,6 +1284,10 @@ void RegisterBattleScene() {
     COND_HOOK(ShouldActorInit, enabled, [](void* refActor, bool* result) {
         Actor* actor = (Actor*)refActor;
         if (actor->id == ACTOR_BOSS_GOMA && gPlayState != NULL && BossGate_InBossRoom(gPlayState)) {
+            // Remember where she lives: the fight starts when Link walks into this room
+            sArenaKnown = true;
+            sArenaRoom = actor->room;
+            sArenaPos = actor->world.pos;
             *result = false;
         }
     });
@@ -1148,8 +1299,8 @@ void RegisterBattleScene() {
         sScene.ui = Ui::None;
         sScene.queue.clear();
         sScene.boss = false;
-        sBossCountdown = 0;
         sBossDone = false;
+        sStartRoom = -1;
         sDanger = 0;
         // Coming into a new area patches the party up (Sheikah Stones and inns come later)
         if (sceneNum != sLastScene) {
@@ -1207,11 +1358,21 @@ void Battle_FieldTick(PlayState* play, Player* player) {
         play->transitionTrigger != TRANS_TRIGGER_OFF) {
         return;
     }
-    // Once Link has landed in the chamber and had a moment to look around, she comes for him
+    // Link walks down the corridor himself; she comes for him once he's inside her chamber
     if (!(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND)) {
         return;
     }
-    if (++sBossCountdown >= kBossStartFrames) {
+    if (sStartRoom < 0) {
+        sStartRoom = player->actor.room;
+    }
+    bool inChamber;
+    if (sArenaKnown) {
+        f32 dx = player->actor.world.pos.x - sArenaPos.x, dz = player->actor.world.pos.z - sArenaPos.z;
+        inChamber = player->actor.room == sArenaRoom && dx * dx + dz * dz < kArenaTrigger * kArenaTrigger;
+    } else {
+        inChamber = player->actor.room != sStartRoom; // she wasn't seen: any room past the corridor
+    }
+    if (inChamber) {
         StartBossBattle(play, player);
     }
 }
@@ -1239,6 +1400,10 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
     }
 
     switch (sScene.ui) {
+        case Ui::BossIntro:
+            UpdateBossIntro(in.a && sIntro.timer > 5);
+            break;
+
         case Ui::Intro:
             if (sScene.timer >= kIntroFrames || (in.a && sScene.timer >= kMessageMinFrames)) {
                 sScene.showingMessage = false;
@@ -1465,6 +1630,15 @@ void Battle_DrawUi(PlayState* play) {
         if (sScene.messageHeld && blinkOn) {
             p.Text(msgX + msgW - 14, msgY + msgH - 10, "▼", Yellow); // press A
         }
+    }
+
+    // ---- The boss's title card, over the bottom of the view as she lands
+    if (sScene.ui == Ui::BossIntro && sIntro.phase == IntroPhase::Title) {
+        int fade = std::min(255, sIntro.timer * 32);
+        int cardY = view.y + view.h - 46;
+        p.Rect(view.x + 2, cardY, view.w - 4, 40, WithAlpha(Black, (u8)std::min(200, fade)));
+        p.TextCenterScaled(SCREEN_WIDTH / 2, cardY + 6, "QUEEN GOHMA", WithAlpha(Red, (u8)fade), 2);
+        p.TextCenter(SCREEN_WIDTH / 2, cardY + 27, "PARASITIC ARMORED ARACHNID", WithAlpha(Cream, (u8)fade));
     }
 
     // ---- Commands: two columns of four (greyed out while messages play)
