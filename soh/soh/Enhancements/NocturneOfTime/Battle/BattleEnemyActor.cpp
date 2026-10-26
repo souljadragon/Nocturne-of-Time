@@ -326,7 +326,7 @@ void BattleEnemyActor_Defeat(Actor* actor) {
         if (actor->params == (s16)Nocturne::EnemyKind::QueenGohma) {
             // Her death throes while she shrinks away
             Animation_Change(&self->skelAnime, (AnimationHeader*)gGohmaDeathAnim, 1.0f, 0.0f,
-                             Animation_GetLastFrame(gGohmaDeathAnim), ANIMMODE_ONCE, -4.0f);
+                             Animation_GetLastFrame((void*)gGohmaDeathAnim), ANIMMODE_ONCE, -4.0f);
             self->playingOnce = false;
         }
     }
@@ -360,7 +360,7 @@ void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim) {
         case Nocturne::EnemyKind::QueenGohma:
             if (anim == BattleAnim::Hang) {
                 Animation_Change(&self->skelAnime, (AnimationHeader*)gGohmaHangAnim, 1.0f, 0.0f,
-                                 Animation_GetLastFrame(gGohmaHangAnim), ANIMMODE_LOOP, 0.0f);
+                                 Animation_GetLastFrame((void*)gGohmaHangAnim), ANIMMODE_LOOP, 0.0f);
                 self->playingOnce = false;
                 return;
             }
