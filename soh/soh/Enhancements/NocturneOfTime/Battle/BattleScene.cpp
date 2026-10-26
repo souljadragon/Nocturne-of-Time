@@ -65,8 +65,8 @@ constexpr f32 kBossMinDistance = 200.0f;
 constexpr f32 kArenaCentreX = -150.0f, kArenaCentreZ = -350.0f;
 constexpr f32 kArenaEntranceX = 150.0f, kArenaEntranceZ = 350.0f;
 constexpr f32 kArenaEntranceBox = 70.0f; // OoT uses 60; a little slack for the crawler's grid
-// Where the party stands for the fight: on the grid, south of the centre, looking north across the room
-constexpr f32 kArenaStandX = -160.0f, kArenaStandZ = 160.0f;
+// Where the party stands for her entrance: where OoT puts Link for it, just inside the doorway
+constexpr f32 kArenaStandX = 150.0f, kArenaStandZ = 300.0f;
 constexpr int kHeartContainerHp = 8;     // max HP for everyone when a boss falls
 
 enum class Ui { None, BossIntro, Intro, Command, Skills, Items, TargetEnemy, TargetAlly, Messages, StatPoints, Ending };
@@ -223,11 +223,10 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     s8 bestFacing = DungeonCrawler_GetFacing();
     f32 bestDist = 0.0f;
     f32 bestScore = roomAt(bestFacing, bestDist) + 30.0f; // a little bias toward the current facing
+    s16 bossYaw = 0;
     if (boss) {
-        // Face the middle of her chamber (to the nearest quarter turn)
-        s16 toCentre =
-            Math_Atan2S(kArenaCentreZ - player->actor.world.pos.z, kArenaCentreX - player->actor.world.pos.x);
-        bestFacing = (s8)((((u16)toCentre + 0x2000) >> 14) & 3);
+        // Look straight at the middle of her chamber (any angle, as OoT's own camera does)
+        bossYaw = Math_Atan2S(kArenaCentreZ - player->actor.world.pos.z, kArenaCentreX - player->actor.world.pos.x);
     }
     for (s8 f = 0; f < 4 && !boss; f++) {
         f32 ahead;
@@ -238,10 +237,12 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
             bestDist = ahead;
         }
     }
-    DungeonCrawler_SetFacing(bestFacing);
     if (boss) {
+        DungeonCrawler_FaceYaw(bossYaw);
         // Bosses need far more room than the 240 units the facing test looks at
-        bestDist = FreeDistance(play, player->actor.world.pos, (s16)(bestFacing * 0x4000), 600.0f);
+        bestDist = FreeDistance(play, player->actor.world.pos, bossYaw, 600.0f);
+    } else {
+        DungeonCrawler_SetFacing(bestFacing);
     }
 
     // Labels: "Deku Baba A", "Deku Baba B" when a kind repeats
@@ -265,7 +266,7 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
     }
 
     // Line the enemies up in front of the camera, left to right on screen
-    s16 yaw = (s16)(bestFacing * 0x4000);
+    s16 yaw = boss ? bossYaw : (s16)(bestFacing * 0x4000);
     Vec3f fwd = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
     Vec3f right = { -Math_CosS(yaw), 0.0f, Math_SinS(yaw) };
     f32 dist = boss ? CLAMP(bestDist - 120.0f, kBossMinDistance, kBossDistance)
@@ -511,6 +512,20 @@ void UpdateBossIntro(bool skip) {
             break;
     }
     DungeonCrawler_SetPitch(sIntro.pitch);
+}
+
+// Her body is drawn well off her actor's position (her animations move it), so placing her "straight ahead"
+// isn't enough: each frame, slide her sideways until her eye is in the middle of the view.
+void CentreBossInView() {
+    Actor* gohma = sScene.enemyActors.empty() ? NULL : sScene.enemyActors[0];
+    float ex, ey, ez;
+    if (gohma == NULL || !BattleEnemyActor_EyePos(gohma, &ex, &ey, &ez)) {
+        return;
+    }
+    f32 off = (ex - sScene.origin.x) * sScene.right.x + (ez - sScene.origin.z) * sScene.right.z;
+    f32 step = std::clamp(off * 0.35f, -12.0f, 12.0f);
+    gohma->world.pos.x -= sScene.right.x * step;
+    gohma->world.pos.z -= sScene.right.z * step;
 }
 
 void StartRandomBattle(PlayState* play, Player* player) {
@@ -1405,6 +1420,10 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
         BattleEnemyActor_SetFast(false);
         PlaySfx(NA_SE_SY_CANCEL);
         in.b = false;
+    }
+
+    if (sScene.boss) {
+        CentreBossInView(); // her eye in the middle of the view, whatever her animation does
     }
 
     switch (sScene.ui) {

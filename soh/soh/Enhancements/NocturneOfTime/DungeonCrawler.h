@@ -14,3 +14,6 @@ void DungeonCrawler_SetFacing(signed char facing);
 // Tilt the first-person view up (positive) or down, in binary angle units; during battles it stays where it's
 // put (boss cutscenes look up at the ceiling), otherwise the right stick takes over again.
 void DungeonCrawler_SetPitch(short pitch);
+
+// Turn to face any yaw (not only a grid direction), e.g. a boss room's centre.
+void DungeonCrawler_FaceYaw(short yaw);

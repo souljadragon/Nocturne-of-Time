@@ -45,6 +45,8 @@ struct BattleEnemy {
     AnimationHeader* idle; // looping idle; one-off animations (attacks, flinches) return to it
     f32 idleSpeed;
     bool playingOnce;
+    Vec3f eye; // Queen Gohma: where her eye was drawn last frame (her body sits well away from her origin)
+    bool eyeValid;
 };
 
 void PlayIdle(BattleEnemy* self, f32 morph) {
@@ -65,6 +67,7 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
     self->idle = NULL;
     self->idleSpeed = 1.0f;
     self->playingOnce = false;
+    self->eyeValid = false;
     thisx->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED;
 
     switch ((Nocturne::EnemyKind)thisx->params) {
@@ -177,6 +180,16 @@ static s32 Gohma_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx**, Vec3f*,
     return false;
 }
 
+// The centre of her eye's lens, as BossGoma_PostLimbDraw finds it
+static void Gohma_PostLimbDraw(PlayState*, s32 limbIndex, Gfx**, Vec3s*, void* thisx) {
+    if (limbIndex == kGohmaLimbEye) {
+        static Vec3f lens = { 0.0f, 300.0f, 2650.0f };
+        BattleEnemy* self = (BattleEnemy*)thisx;
+        Matrix_MultVec3f(&lens, &self->eye);
+        self->eyeValid = true;
+    }
+}
+
 static s32 Larva_OverrideLimbDraw(PlayState* play, s32, Gfx**, Vec3f*, Vec3s*, void*) {
     OPEN_DISPS(play->state.gfxCtx);
     gDPPipeSync(POLY_OPA_DISP++);
@@ -247,7 +260,7 @@ static void BattleEnemy_Draw(Actor* thisx, PlayState* play) {
             break;
         case Nocturne::EnemyKind::QueenGohma:
             gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
-            SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Gohma_OverrideLimbDraw, NULL, self);
+            SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Gohma_OverrideLimbDraw, Gohma_PostLimbDraw, self);
             break;
         case Nocturne::EnemyKind::GohmaLarva:
             gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
@@ -381,4 +394,15 @@ void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim) {
     }
     Animation_Change(&self->skelAnime, once, 1.0f, 0.0f, Animation_GetLastFrame(once), ANIMMODE_ONCE, -4.0f);
     self->playingOnce = true;
+}
+
+bool BattleEnemyActor_EyePos(Actor* actor, float* x, float* y, float* z) {
+    BattleEnemy* self = (BattleEnemy*)actor;
+    if (actor == NULL || !self->eyeValid || self->gone) {
+        return false;
+    }
+    *x = self->eye.x;
+    *y = self->eye.y;
+    *z = self->eye.z;
+    return true;
 }

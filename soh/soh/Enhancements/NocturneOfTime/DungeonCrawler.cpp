@@ -87,18 +87,19 @@ struct CrawlerState {
     s16 yawTo = 0;
     Vec3f bumpDir = { 0.0f, 0.0f, 0.0f };
     f32 bumpAmount = 0.0f;
-    bool needCentre = false; // centre Link in the corridor once he's on the ground (see CentreInCorridor)
+    bool needCentre = false; // line the grid up with the corridor once he's on the ground (AlignToCorridor)
+    s16 gridYaw = 0;         // the grid's rotation: 0 everywhere except where the level isn't axis-aligned
 };
 
 CrawlerState sCrawler;
 
 s16 FacingToYaw(s8 facing) {
-    return (s16)((facing & 3) * 0x4000);
+    return (s16)(sCrawler.gridYaw + (facing & 3) * 0x4000);
 }
 
 s8 YawToFacing(s16 yaw) {
-    // Round to the nearest quarter turn
-    return (s8)((((u16)yaw + 0x2000) >> 14) & 3);
+    // Round to the nearest quarter turn of the grid
+    return (s8)((((u16)(s16)(yaw - sCrawler.gridYaw) + 0x2000) >> 14) & 3);
 }
 
 Vec3f YawToDir(s16 yaw) {
@@ -121,9 +122,14 @@ bool PlayerBusy(Player* player) {
 
 // Snap a world XZ position to the nearest tile centre of the current grid.
 Vec3f SnapToGrid(const Vec3f& pos) {
+    // In the grid's own axes: f0 = facing 0 = (sin g, cos g), f1 = (cos g, -sin g)
+    f32 s = Math_SinS(sCrawler.gridYaw), c = Math_CosS(sCrawler.gridYaw);
+    f32 dx = pos.x - sCrawler.gridOrigin.x, dz = pos.z - sCrawler.gridOrigin.z;
+    f32 a = roundf((dx * c - dz * s) / kTileSize) * kTileSize;
+    f32 b = roundf((dx * s + dz * c) / kTileSize) * kTileSize;
     Vec3f out = pos;
-    out.x = sCrawler.gridOrigin.x + roundf((pos.x - sCrawler.gridOrigin.x) / kTileSize) * kTileSize;
-    out.z = sCrawler.gridOrigin.z + roundf((pos.z - sCrawler.gridOrigin.z) / kTileSize) * kTileSize;
+    out.x = sCrawler.gridOrigin.x + c * a + s * b;
+    out.z = sCrawler.gridOrigin.z - s * a + c * b;
     return out;
 }
 
@@ -322,6 +328,7 @@ void UpdateAction(Player* player) {
 void Activate(Player* player) {
     sCrawler.active = true;
     sCrawler.action = Action::None;
+    sCrawler.gridYaw = 0;
     sCrawler.pitch = 0;
     // Steps land on the automap's fixed world tiles (centres at multiples of the tile size)
     sCrawler.gridOrigin = { roundf(player->actor.world.pos.x / kTileSize) * kTileSize, 0.0f,
@@ -335,30 +342,54 @@ void Activate(Player* player) {
     player->actor.shape.shadowDraw = NULL;
 }
 
-// Between two walls (a corridor), move Link to the middle and run the grid through that line, so steps stay
-// centred. Only along an axis with walls close on both sides; open floor keeps the usual grid.
-void CentreInCorridor(PlayState* play, Player* player) {
-    const f32 kReach = 200.0f;
+// For levels that don't run along the world axes (Gohma's lair): turn the grid to match the nearest wall, move
+// Link to the middle between that wall and the one opposite, and run the grid through him, so steps follow the
+// corridor straight down its centre and the view looks along it.
+void AlignToCorridor(PlayState* play, Player* player) {
+    const f32 kReach = 220.0f;
     Vec3f pos = player->actor.world.pos;
-    for (int axis = 0; axis < 2; axis++) {
-        Vec3f plus = axis == 0 ? Vec3f{ 1.0f, 0.0f, 0.0f } : Vec3f{ 0.0f, 0.0f, 1.0f };
-        Vec3f minus = { -plus.x, 0.0f, -plus.z };
-        WallHit a = ProbeWalls(play, pos, plus, kReach);
-        WallHit b = ProbeWalls(play, pos, minus, kReach);
-        if (!a.hit || !b.hit) {
-            continue;
+    WallHit nearest;
+    bool found = false;
+    for (int i = 0; i < 16; i++) {
+        WallHit w = ProbeWalls(play, pos, YawToDir((s16)(i * 0x1000)), kReach);
+        if (w.hit && w.poly != NULL && (!found || w.dist < nearest.dist)) {
+            nearest = w;
+            found = true;
         }
-        f32 shift = (a.dist - b.dist) * 0.5f;
-        if (axis == 0) {
-            pos.x += shift;
-            sCrawler.gridOrigin.x = pos.x;
-        } else {
-            pos.z += shift;
-            sCrawler.gridOrigin.z = pos.z;
+    }
+    if (!found) {
+        return;
+    }
+    f32 nx = COLPOLY_GET_NORMAL(nearest.poly->normal.x), nz = COLPOLY_GET_NORMAL(nearest.poly->normal.z);
+    if (nx * nx + nz * nz < 0.5f) {
+        return; // not an upright wall
+    }
+    s16 normalYaw = Math_Atan2S(nz, nx);
+    s32 g = normalYaw;
+    while (g > 0x2000) {
+        g -= 0x4000;
+    }
+    while (g < -0x2000) {
+        g += 0x4000;
+    }
+    sCrawler.gridYaw = (s16)g;
+
+    // Centre between walls along both grid axes (in a corridor only the cross-axis has walls in reach)
+    for (int axis = 0; axis < 2; axis++) {
+        Vec3f n = YawToDir((s16)(normalYaw + axis * 0x4000));
+        WallHit a = ProbeWalls(play, pos, n, kReach);
+        WallHit b = ProbeWalls(play, pos, { -n.x, 0.0f, -n.z }, kReach);
+        if (a.hit && b.hit) {
+            f32 shift = (a.dist - b.dist) * 0.5f;
+            pos.x += n.x * shift;
+            pos.z += n.z * shift;
         }
     }
     player->actor.world.pos.x = pos.x;
     player->actor.world.pos.z = pos.z;
+    sCrawler.gridOrigin = { pos.x, 0.0f, pos.z };
+    sCrawler.facing = YawToFacing(sCrawler.curYaw);
+    StartTurn(FacingToYaw(sCrawler.facing));
 }
 
 void Deactivate(Player* player) {
@@ -451,7 +482,7 @@ bool OnFilterInput(Player* player, Input* input) {
     bool airborne = (player->stateFlags1 & kAirborneFlags1) || !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND);
     if (sCrawler.needCentre && !airborne && sCrawler.action == Action::None) {
         sCrawler.needCentre = false;
-        CentreInCorridor(play, player);
+        AlignToCorridor(play, player);
     }
 
     // Holding a direction keeps walking/turning, one tile or quarter turn at a time
@@ -575,4 +606,10 @@ static RegisterShipInitFunc initFunc(RegisterDungeonCrawler, { CVAR_CRAWLER_NAME
 
 void DungeonCrawler_SetPitch(short pitch) {
     sCrawler.pitch = pitch;
+}
+
+void DungeonCrawler_FaceYaw(short yaw) {
+    sCrawler.action = Action::None;
+    sCrawler.facing = YawToFacing(yaw);
+    StartTurn(yaw); // any angle: boss fights look straight at the room's centre
 }
