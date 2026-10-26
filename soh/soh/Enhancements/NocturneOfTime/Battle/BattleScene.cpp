@@ -395,12 +395,12 @@ f32 CeilingAbove(PlayState* play, const Vec3f& floor) {
     Vec3f hit;
     CollisionPoly* poly;
     s32 bgId;
-    f32 ceil = floor.y + 320.0f;
+    f32 ceilingY = floor.y + 320.0f;
     if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, false, true, true, false, &bgId)) {
-        ceil = hit.y;
+        ceilingY = hit.y;
     }
     // A very high ceiling would hang her out of sight
-    return std::min(ceil, floor.y + 420.0f);
+    return std::min(ceilingY, floor.y + 420.0f);
 }
 
 s16 PitchToward(f32 targetY) {
