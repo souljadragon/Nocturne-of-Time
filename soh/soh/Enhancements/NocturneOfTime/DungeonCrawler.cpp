@@ -388,8 +388,12 @@ void AlignToCorridor(PlayState* play, Player* player) {
     player->actor.world.pos.x = pos.x;
     player->actor.world.pos.z = pos.z;
     sCrawler.gridOrigin = { pos.x, 0.0f, pos.z };
-    sCrawler.facing = YawToFacing(sCrawler.curYaw);
-    StartTurn(FacingToYaw(sCrawler.facing));
+    // Straight onto the corridor's line in one go (this happens as the view switches to first person, so a
+    // cut reads better than a turn followed by a second adjustment)
+    sCrawler.facing = YawToFacing(player->actor.shape.rot.y);
+    sCrawler.curYaw = FacingToYaw(sCrawler.facing);
+    sCrawler.action = Action::None;
+    player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = sCrawler.curYaw;
 }
 
 void Deactivate(Player* player) {
@@ -480,7 +484,7 @@ bool OnFilterInput(Player* player, Input* input) {
     ClearMovementInput(input);
 
     bool airborne = (player->stateFlags1 & kAirborneFlags1) || !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND);
-    if (sCrawler.needCentre && !airborne && sCrawler.action == Action::None) {
+    if (sCrawler.needCentre && !airborne) {
         sCrawler.needCentre = false;
         AlignToCorridor(play, player);
     }

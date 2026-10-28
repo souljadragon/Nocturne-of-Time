@@ -120,6 +120,9 @@ struct Scene {
     Vec3f fwd = { 0.0f, 0.0f, 1.0f };
     Vec3f right = { 1.0f, 0.0f, 0.0f };
     f32 dist = 0.0f;
+    // Keeping a boss centred (CentreBossInView)
+    bool centrePrimed = false; // the next measurement is applied all at once
+    f32 centreError = 0.0f;    // smoothed sideways error, so her idle sway isn't chased
 };
 
 Scene sScene;
@@ -422,6 +425,8 @@ void BeginBossIntro(PlayState* play) {
         sIntro.phase = IntroPhase::Title;
         return;
     }
+    sScene.centrePrimed = false;
+    sScene.centreError = 0.0f;
     sIntro.floorY = gohma->world.pos.y;
     sIntro.ceilY = CeilingAbove(play, gohma->world.pos);
     // Upside down on the ceiling, as in OoT
@@ -435,6 +440,7 @@ void BeginBossIntro(PlayState* play) {
 void LandGohma(Actor* gohma) {
     gohma->world.pos.y = sIntro.floorY;
     gohma->shape.rot.x = 0;
+    sScene.centrePrimed = false; // re-centre in one go under the landing quake
     if (gPlayState != NULL) {
         s16 quake = Quake_Add(Play_GetCamera(gPlayState, CAM_ID_MAIN), 3);
         Quake_SetSpeed(quake, 22000);
@@ -522,8 +528,22 @@ void CentreBossInView() {
     if (gohma == NULL || !BattleEnemyActor_EyePos(gohma, &ex, &ey, &ez)) {
         return;
     }
+    if (sScene.ui == Ui::BossIntro && sIntro.phase == IntroPhase::Fall) {
+        return; // she's turning over in the air: her eye swings about, so hold still until she lands
+    }
     f32 off = (ex - sScene.origin.x) * sScene.right.x + (ez - sScene.origin.z) * sScene.right.z;
-    f32 step = std::clamp(off * 0.35f, -12.0f, 12.0f);
+    f32 step;
+    if (!sScene.centrePrimed) {
+        // First sight of her (on the ceiling), and again as she lands: straight to the middle
+        sScene.centrePrimed = true;
+        sScene.centreError = 0.0f;
+        step = off;
+    } else {
+        // Then only slow corrections from the average error, which her swaying cancels out of
+        sScene.centreError += (off - sScene.centreError) * 0.08f;
+        step = std::clamp(sScene.centreError * 0.15f, -3.0f, 3.0f);
+        sScene.centreError -= step;
+    }
     gohma->world.pos.x -= sScene.right.x * step;
     gohma->world.pos.z -= sScene.right.z * step;
 }
