@@ -28,3 +28,6 @@ void BattleEnemyActor_Animate(Actor* actor, BattleAnim anim);
 
 // Where Queen Gohma's eye was drawn last frame (false before she's drawn, or for other enemies).
 bool BattleEnemyActor_EyePos(Actor* actor, float* x, float* y, float* z);
+
+// The middle of Queen Gohma's body as drawn last frame (the average of her limbs).
+bool BattleEnemyActor_BodyPos(Actor* actor, float* x, float* y, float* z);

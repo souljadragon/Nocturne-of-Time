@@ -122,6 +122,7 @@ struct Scene {
     f32 dist = 0.0f;
     // Keeping a boss centred (CentreBossInView)
     bool centrePrimed = false; // the next measurement is applied all at once
+    int centreDelay = 0;       // frames to wait first (her landing pose settling)
     f32 centreError = 0.0f;    // smoothed sideways error, so her idle sway isn't chased
 };
 
@@ -426,6 +427,7 @@ void BeginBossIntro(PlayState* play) {
         return;
     }
     sScene.centrePrimed = false;
+    sScene.centreDelay = 0;
     sScene.centreError = 0.0f;
     sIntro.floorY = gohma->world.pos.y;
     sIntro.ceilY = CeilingAbove(play, gohma->world.pos);
@@ -433,14 +435,15 @@ void BeginBossIntro(PlayState* play) {
     gohma->world.pos.y = sIntro.ceilY - 4.0f;
     gohma->shape.rot.x = (s16)0x8000;
     BattleEnemyActor_Animate(gohma, BattleAnim::Hang);
-    sIntro.pitchTarget = PitchToward(sIntro.ceilY - 70.0f);
+    sIntro.pitchTarget = PitchToward(sIntro.ceilY - 150.0f); // until her body has been measured
     Audio_QueueSeqCmd(0x1 << 28 | SEQ_PLAYER_BGM_MAIN << 24 | 0x100FF); // silence before she appears
 }
 
 void LandGohma(Actor* gohma) {
     gohma->world.pos.y = sIntro.floorY;
     gohma->shape.rot.x = 0;
-    sScene.centrePrimed = false; // re-centre in one go under the landing quake
+    sScene.centrePrimed = false; // re-centre in one go under the landing quake, once her landing pose settles
+    sScene.centreDelay = 6;
     if (gPlayState != NULL) {
         s16 quake = Quake_Add(Play_GetCamera(gPlayState, CAM_ID_MAIN), 3);
         Quake_SetSpeed(quake, 22000);
@@ -465,6 +468,11 @@ void UpdateBossIntro(bool skip) {
     switch (sIntro.phase) {
         case IntroPhase::LookUp: {
             // Something is up there: the view tilts up to her
+            // Aim at the middle of her body as she hangs (she's big, so well below the ceiling)
+            float bx, by, bz;
+            if (gohma != NULL && BattleEnemyActor_BodyPos(gohma, &bx, &by, &bz)) {
+                sIntro.pitchTarget = PitchToward(by);
+            }
             f32 t = std::min(1.0f, (f32)sIntro.timer / kIntroLookFrames);
             t = t * t * (3.0f - 2.0f * t);
             sIntro.pitch = (s16)(sIntro.pitchTarget * t);
@@ -482,6 +490,7 @@ void UpdateBossIntro(bool skip) {
             break;
         }
         case IntroPhase::Watch:
+            sIntro.pitch = sIntro.pitchTarget;
             if (sIntro.timer >= kIntroWatchFrames && gohma != NULL) {
                 sIntro.phase = IntroPhase::Fall;
                 sIntro.timer = 0;
@@ -495,7 +504,9 @@ void UpdateBossIntro(bool skip) {
                 sIntro.fallSpeed += 2.0f;
                 gohma->world.pos.y -= sIntro.fallSpeed;
                 Math_ApproachS(&gohma->shape.rot.x, 0, 2, 0xBB8);
-                sIntro.pitch = std::max<s16>(0, PitchToward(gohma->world.pos.y + 40.0f));
+                float bx, by, bz;
+                f32 follow = BattleEnemyActor_BodyPos(gohma, &bx, &by, &bz) ? by : gohma->world.pos.y - 60.0f;
+                sIntro.pitch = std::max<s16>(0, PitchToward(follow));
                 if (gohma->world.pos.y <= sIntro.floorY) {
                     LandGohma(gohma);
                 }
@@ -525,11 +536,15 @@ void UpdateBossIntro(bool skip) {
 void CentreBossInView() {
     Actor* gohma = sScene.enemyActors.empty() ? NULL : sScene.enemyActors[0];
     float ex, ey, ez;
-    if (gohma == NULL || !BattleEnemyActor_EyePos(gohma, &ex, &ey, &ez)) {
+    if (gohma == NULL || !BattleEnemyActor_BodyPos(gohma, &ex, &ey, &ez)) {
         return;
     }
     if (sScene.ui == Ui::BossIntro && sIntro.phase == IntroPhase::Fall) {
-        return; // she's turning over in the air: her eye swings about, so hold still until she lands
+        return; // she's turning over in the air, so hold still until she lands
+    }
+    if (sScene.centreDelay > 0) {
+        sScene.centreDelay--;
+        return;
     }
     f32 off = (ex - sScene.origin.x) * sScene.right.x + (ez - sScene.origin.z) * sScene.right.z;
     f32 step;

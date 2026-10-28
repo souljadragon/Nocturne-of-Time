@@ -47,6 +47,10 @@ struct BattleEnemy {
     bool playingOnce;
     Vec3f eye; // Queen Gohma: where her eye was drawn last frame (her body sits well away from her origin)
     bool eyeValid;
+    Vec3f body;     // ...and the middle of her body: the average of all her limbs, which sways far less
+    Vec3f bodySum;  // (summed while she's drawn)
+    int bodyCount;
+    bool bodyValid;
 };
 
 void PlayIdle(BattleEnemy* self, f32 morph) {
@@ -68,6 +72,8 @@ void BattleEnemy_Init(Actor* thisx, PlayState* play) {
     self->idleSpeed = 1.0f;
     self->playingOnce = false;
     self->eyeValid = false;
+    self->bodyValid = false;
+    self->bodyCount = 0;
     thisx->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED;
 
     switch ((Nocturne::EnemyKind)thisx->params) {
@@ -181,12 +187,21 @@ static s32 Gohma_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx**, Vec3f*,
 }
 
 // The centre of her eye's lens, as BossGoma_PostLimbDraw finds it
-static void Gohma_PostLimbDraw(PlayState*, s32 limbIndex, Gfx**, Vec3s*, void* thisx) {
+static void Gohma_PostLimbDraw(PlayState*, s32 limbIndex, Gfx** dList, Vec3s*, void* thisx) {
+    BattleEnemy* self = (BattleEnemy*)thisx;
     if (limbIndex == kGohmaLimbEye) {
         static Vec3f lens = { 0.0f, 300.0f, 2650.0f };
-        BattleEnemy* self = (BattleEnemy*)thisx;
         Matrix_MultVec3f(&lens, &self->eye);
         self->eyeValid = true;
+    }
+    if (*dList != NULL) {
+        static Vec3f zero = { 0.0f, 0.0f, 0.0f };
+        Vec3f p;
+        Matrix_MultVec3f(&zero, &p);
+        self->bodySum.x += p.x;
+        self->bodySum.y += p.y;
+        self->bodySum.z += p.z;
+        self->bodyCount++;
     }
 }
 
@@ -260,7 +275,14 @@ static void BattleEnemy_Draw(Actor* thisx, PlayState* play) {
             break;
         case Nocturne::EnemyKind::QueenGohma:
             gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
+            self->bodySum = { 0.0f, 0.0f, 0.0f };
+            self->bodyCount = 0;
             SkelAnime_DrawSkeletonOpa(play, &self->skelAnime, Gohma_OverrideLimbDraw, Gohma_PostLimbDraw, self);
+            if (self->bodyCount > 0) {
+                f32 n = (f32)self->bodyCount;
+                self->body = { self->bodySum.x / n, self->bodySum.y / n, self->bodySum.z / n };
+                self->bodyValid = true;
+            }
             break;
         case Nocturne::EnemyKind::GohmaLarva:
             gSPSegment(POLY_OPA_DISP++, 0x08, (uintptr_t)EmptyDList(play->state.gfxCtx));
@@ -404,5 +426,16 @@ bool BattleEnemyActor_EyePos(Actor* actor, float* x, float* y, float* z) {
     *x = self->eye.x;
     *y = self->eye.y;
     *z = self->eye.z;
+    return true;
+}
+
+bool BattleEnemyActor_BodyPos(Actor* actor, float* x, float* y, float* z) {
+    BattleEnemy* self = (BattleEnemy*)actor;
+    if (actor == NULL || !self->bodyValid || self->gone) {
+        return false;
+    }
+    *x = self->body.x;
+    *y = self->body.y;
+    *z = self->body.z;
     return true;
 }
