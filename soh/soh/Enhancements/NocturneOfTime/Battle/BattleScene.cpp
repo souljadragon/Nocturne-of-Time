@@ -413,9 +413,42 @@ f32 CeilingAbove(PlayState* play, const Vec3f& floor) {
     return std::min(ceilingY, floor.y + 420.0f);
 }
 
+// The camera as it was actually drawn last frame: where it is and which way it looks (across the floor).
+// Centring and aiming against this, rather than the battle's planned line of sight, is what puts her in the
+// middle of the picture even when Link was nudged by collision or the turn hasn't quite finished.
+bool RealCamera(Vec3f& eye, Vec3f& fwd, Vec3f& right) {
+    if (gPlayState == NULL) {
+        return false;
+    }
+    Camera* cam = Play_GetCamera(gPlayState, CAM_ID_MAIN);
+    if (cam == NULL) {
+        return false;
+    }
+    eye = cam->eye;
+    f32 dx = cam->at.x - cam->eye.x, dz = cam->at.z - cam->eye.z;
+    f32 len = sqrtf(dx * dx + dz * dz);
+    if (len < 0.001f) {
+        return false;
+    }
+    fwd = { dx / len, 0.0f, dz / len };
+    right = { -fwd.z, 0.0f, fwd.x }; // looking along +Z, screen right is -X
+    return true;
+}
+
 s16 PitchToward(f32 targetY) {
     f32 dy = targetY - (sScene.origin.y + 58.0f);
     return (s16)std::clamp<s32>(Math_Atan2S(std::max(1.0f, sScene.dist), dy), -0x1000, 0x3800);
+}
+
+// The pitch that looks straight at a point, measured from the real camera
+s16 PitchAt(f32 x, f32 y, f32 z) {
+    Vec3f eye, fwd, right;
+    if (!RealCamera(eye, fwd, right)) {
+        return PitchToward(y);
+    }
+    f32 dx = x - eye.x, dz = z - eye.z;
+    f32 flat = std::max(1.0f, sqrtf(dx * dx + dz * dz));
+    return (s16)std::clamp<s32>(Math_Atan2S(flat, y - eye.y), -0x1000, 0x3800);
 }
 
 void BeginBossIntro(PlayState* play) {
@@ -427,7 +460,7 @@ void BeginBossIntro(PlayState* play) {
         return;
     }
     sScene.centrePrimed = false;
-    sScene.centreDelay = 0;
+    sScene.centreDelay = 8; // the view is still finishing its turn toward the room's centre
     sScene.centreError = 0.0f;
     sIntro.floorY = gohma->world.pos.y;
     sIntro.ceilY = CeilingAbove(play, gohma->world.pos);
@@ -471,7 +504,7 @@ void UpdateBossIntro(bool skip) {
             // Aim at the middle of her body as she hangs (she's big, so well below the ceiling)
             float bx, by, bz;
             if (gohma != NULL && BattleEnemyActor_BodyPos(gohma, &bx, &by, &bz)) {
-                sIntro.pitchTarget = PitchToward(by);
+                sIntro.pitchTarget = PitchAt(bx, by, bz);
             }
             f32 t = std::min(1.0f, (f32)sIntro.timer / kIntroLookFrames);
             t = t * t * (3.0f - 2.0f * t);
@@ -505,8 +538,11 @@ void UpdateBossIntro(bool skip) {
                 gohma->world.pos.y -= sIntro.fallSpeed;
                 Math_ApproachS(&gohma->shape.rot.x, 0, 2, 0xBB8);
                 float bx, by, bz;
-                f32 follow = BattleEnemyActor_BodyPos(gohma, &bx, &by, &bz) ? by : gohma->world.pos.y - 60.0f;
-                sIntro.pitch = std::max<s16>(0, PitchToward(follow));
+                if (BattleEnemyActor_BodyPos(gohma, &bx, &by, &bz)) {
+                    sIntro.pitch = std::max<s16>(0, PitchAt(bx, by, bz));
+                } else {
+                    sIntro.pitch = std::max<s16>(0, PitchToward(gohma->world.pos.y - 60.0f));
+                }
                 if (gohma->world.pos.y <= sIntro.floorY) {
                     LandGohma(gohma);
                 }
@@ -546,7 +582,12 @@ void CentreBossInView() {
         sScene.centreDelay--;
         return;
     }
-    f32 off = (ex - sScene.origin.x) * sScene.right.x + (ez - sScene.origin.z) * sScene.right.z;
+    Vec3f camEye, camFwd, camRight;
+    if (!RealCamera(camEye, camFwd, camRight)) {
+        return;
+    }
+    // How far right of the picture's centre line her body is
+    f32 off = (ex - camEye.x) * camRight.x + (ez - camEye.z) * camRight.z;
     f32 step;
     if (!sScene.centrePrimed) {
         // First sight of her (on the ceiling), and again as she lands: straight to the middle
@@ -559,8 +600,8 @@ void CentreBossInView() {
         step = std::clamp(sScene.centreError * 0.15f, -3.0f, 3.0f);
         sScene.centreError -= step;
     }
-    gohma->world.pos.x -= sScene.right.x * step;
-    gohma->world.pos.z -= sScene.right.z * step;
+    gohma->world.pos.x -= camRight.x * step;
+    gohma->world.pos.z -= camRight.z * step;
 }
 
 void StartRandomBattle(PlayState* play, Player* player) {
