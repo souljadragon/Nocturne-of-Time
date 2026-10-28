@@ -630,9 +630,23 @@ void SpawnJoiningEnemy(PlayState* play, int index) {
     static const f32 kLateral[] = { -75.0f, 75.0f, -140.0f, 140.0f, 0.0f };
     static const f32 kCloser[] = { 90.0f, 90.0f, 30.0f, 30.0f, 150.0f };
     int slot = std::clamp(k, 0, 4);
-    f32 d = std::max(60.0f, sScene.dist - kCloser[slot]);
-    Vec3f pos = { sScene.origin.x + sScene.fwd.x * d + sScene.right.x * kLateral[slot], sScene.origin.y,
-                  sScene.origin.z + sScene.fwd.z * d + sScene.right.z * kLateral[slot] };
+    // Mirror images either side of the picture's real centre line, which is where the queen is kept
+    Vec3f base = sScene.origin, fwd = sScene.fwd, right = sScene.right;
+    f32 queenDist = sScene.dist;
+    Vec3f camEye, camFwd, camRight;
+    if (RealCamera(camEye, camFwd, camRight)) {
+        base = { camEye.x, sScene.origin.y, camEye.z };
+        fwd = camFwd;
+        right = camRight;
+        Actor* queen = sScene.enemyActors.empty() ? NULL : sScene.enemyActors[0];
+        float qx, qy, qz;
+        if (queen != NULL && BattleEnemyActor_BodyPos(queen, &qx, &qy, &qz)) {
+            queenDist = (qx - camEye.x) * camFwd.x + (qz - camEye.z) * camFwd.z;
+        }
+    }
+    f32 d = std::max(60.0f, queenDist - kCloser[slot]);
+    Vec3f pos = { base.x + fwd.x * d + right.x * kLateral[slot], sScene.origin.y,
+                  base.z + fwd.z * d + right.z * kLateral[slot] };
     Vec3f probe = { pos.x, pos.y + 50.0f, pos.z };
     CollisionPoly* poly;
     s32 bgId;
@@ -640,7 +654,7 @@ void SpawnJoiningEnemy(PlayState* play, int index) {
     if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY < pos.y - 80.0f) {
         floorY = pos.y;
     }
-    s16 face = Math_Atan2S(sScene.origin.z - pos.z, sScene.origin.x - pos.x);
+    s16 face = Math_Atan2S(base.z - pos.z, base.x - pos.x);
     while ((int)sScene.enemyActors.size() < index) {
         sScene.enemyActors.push_back(NULL);
     }
