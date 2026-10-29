@@ -29,6 +29,15 @@ Random-battle theme for Hollowed Husk. Composed by the user in FL Studio; mixed 
 | `Hollowed Husk - Battle A (beta) [preview].mp3` | Intro + loop twice + fade |
 | `placeholder/` | The OST chat's v2 placeholder: per-part MIDI and a preview |
 
+## Take Your Time - Kokiri Haven Shop (beta) — `kokiri_haven_shop/`
+Shop theme for **Kokiri Haven**, the hub (Kokiri Forest, renamed). Not built yet in the game. Only the OST chat's placeholder exists so far; the user's beta goes in this folder as `Take Your Time - Kokiri Haven Shop (beta).wav`. 120 BPM, F major, swung 8ths.
+
+| File | Use |
+|---|---|
+| `placeholder/Take Your Time - Kokiri Haven Shop (placeholder v1).wav` | 32 kHz 16-bit. Intro 0–4 s (2 bars), loop 4.000–68.000 s = samples 128,000–2,176,000. -14 LUFS |
+| `placeholder/… [preview].mp3` | Intro + loop twice + fade |
+| `placeholder/… [parts].mid` | One track per part, section markers. Straight timing: set swing to ~55% on 8ths |
+
 ## Getting it into the game (for the build chat)
 - **Dungeon music:** "Hollowed Husk - Dungeon Theme (beta)" should replace the Deku Tree's background music while exploring.
 - **Battle music:** battles queue music in `soh/soh/Enhancements/NocturneOfTime/Battle/BattleScene.cpp` with `Audio_QueueSeqCmd` (currently `NA_BGM_BOSS` and `NA_BGM_BOSS_CLEAR` for Queen Gohma). Random Hollowed Husk battles should start "Hollowed Husk - Battle A (beta)" when the battle begins, then return to the dungeon theme afterwards.
@@ -38,6 +47,7 @@ Random-battle theme for Hollowed Husk. Composed by the user in FL Studio; mixed 
 ## Tools (`tools/`)
 - `tools/placeholder/`: the scripts that wrote and rendered the Battle A placeholder (`compose.py` = notes, `render.py` = synth and mix, `write_midi.py` = MIDI). Run from that folder: `python3 render.py`, `python3 write_midi.py` (need numpy and scipy; output goes to `out/`).
 - `tools/dungeon_placeholder/`: the Dungeon Theme placeholder (`compose_d.py` notes, `render_d.py` synth, `mixdown.py` mix and master, `write_midi_d.py`). They import helpers from `tools/placeholder/` and `tools/mix/`; the `sys.path` lines point at the OST chat's work folders, so adjust them to run locally.
+- `tools/shop_placeholder/`: the Kokiri Haven Shop placeholder (`compose_s.py` notes, `render_s.py` synth, `mixdown_s.py` mix and master, `write_midi_s.py`). Same import setup as the dungeon placeholder; it also needs the reference track in `ref/ref.mp3` for the tonal match.
 - `tools/mix/`: the Battle A stem mix. `session.py` runs the per-stem chains, `master.py` masters and exports. Needs numpy, scipy and ffmpeg.
 - `tools/dungeon_mix/session_d.py`: the Dungeon Theme stem mix and master, in one script. It uses `mix.py` and `common.py` from `tools/mix/`. Stems go in `stems/` named after their part (`piano.wav`, `organ.wav`, …), plus the reference as `stems/ref.mp3`.
 
