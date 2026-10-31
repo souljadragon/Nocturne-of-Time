@@ -411,7 +411,8 @@ void Deactivate(Player* player) {
 }
 
 void ClearMovementInput(Input* input) {
-    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L | BTN_R;
+    // B too: Link doesn't swing his sword while crawling; fights are Press Turn battles
+    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L | BTN_R | BTN_B;
     for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
         pad->stick_x = 0;
         pad->stick_y = 0;

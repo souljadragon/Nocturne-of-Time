@@ -2,6 +2,10 @@
 #include "soh/cvar_prefixes.h"
 #include "soh/Enhancements/audio/AudioCollection.h"
 #include "NocturneMusic.h"
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/ShipInit.hpp"
+#include "../DungeonCrawler.h"
+#include "../Battle/BattleScene.h"
 #include <string>
 
 extern "C" {
@@ -94,3 +98,20 @@ void NocturneMusic_EndBattle(PlayState* play) {
         Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | 0x0F0000 | NA_BGM_INSIDE_DEKU_TREE);
     }
 }
+
+namespace {
+
+void RegisterNocturneMusic() {
+    bool enabled = CVarGetInteger(CVAR_ENHANCEMENT("Nocturne.DungeonCrawler"), 1) != 0;
+    // No vanilla "enemy nearby" music while crawling or fighting: it ducks the main track and switches its
+    // channels off, which silences the streamed tracks (and the battle actors would set it off every fight)
+    COND_VB_SHOULD(VB_DETECT_BGM_ENEMY, enabled, {
+        if (DungeonCrawler_IsActive() || Battle_IsActive()) {
+            *should = false;
+        }
+    });
+}
+
+RegisterShipInitFunc initFunc(RegisterNocturneMusic, { CVAR_ENHANCEMENT("Nocturne.DungeonCrawler") });
+
+} // namespace

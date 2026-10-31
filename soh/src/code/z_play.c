@@ -1,3 +1,4 @@
+#include "soh/Enhancements/NocturneOfTime/AdultTimeline.h"
 #include "global.h"
 #include "vt.h"
 
@@ -382,6 +383,9 @@ void Play_Init(GameState* thisx) {
     }
 
     gPlayState = play;
+
+    // Nocturne of Time: the alternate adult timeline
+    Nocturne_BeforePlayInit();
 
     SystemArena_Display();
 
