@@ -1,3 +1,4 @@
+#include "soh/Enhancements/NocturneOfTime/AdultTimeline.h"
 #include "global.h"
 #include "soh/Enhancements/game-interactor/vanilla-behavior/GIVanillaBehavior.h"
 #include "vt.h"
@@ -132,14 +133,16 @@ void Sram_OpenSave() {
 
         default:
             // Use the saved entrance value with remember save location, except when in grottos/fairy fountains
-            if (CVarGetInteger(CVAR_ENHANCEMENT("RememberSaveLocation"), 0) &&
+            // (always on in Nocturne of Time: vanilla would send adult Link to the Temple of Time)
+            if ((CVarGetInteger(CVAR_ENHANCEMENT("RememberSaveLocation"), 0) || Nocturne_AdultTimelineOn()) &&
                 gSaveContext.savedSceneNum != SCENE_FAIRYS_FOUNTAIN && gSaveContext.savedSceneNum != SCENE_GROTTOS) {
                 break;
             }
 
             if (gSaveContext.savedSceneNum != SCENE_LINKS_HOUSE) {
                 gSaveContext.entranceIndex =
-                    (LINK_AGE_IN_YEARS == YEARS_CHILD) ? ENTR_LINKS_HOUSE_CHILD_SPAWN : ENTR_TEMPLE_OF_TIME_WARP_PAD;
+                    (LINK_AGE_IN_YEARS == YEARS_CHILD || Nocturne_AdultTimelineOn()) ? ENTR_LINKS_HOUSE_CHILD_SPAWN
+                                                                                    : ENTR_TEMPLE_OF_TIME_WARP_PAD;
             } else {
                 gSaveContext.entranceIndex = ENTR_LINKS_HOUSE_CHILD_SPAWN;
             }

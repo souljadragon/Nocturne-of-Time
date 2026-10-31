@@ -35,6 +35,10 @@ RegisterShipInitFunc initFunc(RegisterAdultTimeline,
 
 } // namespace
 
+extern "C" int Nocturne_AdultTimelineOn(void) {
+    return AdultTimelineOn() ? 1 : 0;
+}
+
 extern "C" void Nocturne_BeforePlayInit(void) {
     if (!AdultTimelineOn()) {
         return;
