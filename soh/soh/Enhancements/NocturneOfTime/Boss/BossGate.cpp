@@ -230,6 +230,8 @@ void BossGate_Update(PlayState* play, void* inputPtr) {
     }
 }
 
+static unsigned sBlink = 0;
+
 bool BossGate_DrawPrompt(Retro::Painter& p, int x, int y, int w) {
     using namespace Retro;
     if (sPrompt == Prompt::None) {
@@ -248,7 +250,7 @@ bool BossGate_DrawPrompt(Retro::Painter& p, int x, int y, int w) {
             int left = kBossGateWins - sWins;
             line1 = "A strange force seals the web.";
             line2 = "Win " + std::to_string(left) + " more battle" + (left == 1 ? "." : "s.");
-            keys = "A:OK";
+            keys = ""; // just waits for A: the blinking marker
             c = Violet;
             break;
         }
@@ -262,7 +264,11 @@ bool BossGate_DrawPrompt(Retro::Painter& p, int x, int y, int w) {
     }
     p.Text(x, y, line1, c);
     p.Text(x, y + kLineH, line2, c);
-    p.TextRight(x + w, y + kLineH, keys, Yellow);
+    if (!keys.empty()) {
+        p.TextRight(x + w, y + kLineH, keys, Yellow);
+    } else if ((sBlink++ / 4) % 2 == 0) {
+        p.TextRight(x + w, y + kLineH, "▼", Yellow); // press A
+    }
     return true;
 }
 

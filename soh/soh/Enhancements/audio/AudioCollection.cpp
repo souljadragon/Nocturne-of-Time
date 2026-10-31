@@ -1,3 +1,4 @@
+#include "soh/Enhancements/NocturneOfTime/Audio/NocturneMusic.h"
 #include "AudioCollection.h"
 #include "sequence.h"
 #include "sfx.h"
@@ -372,6 +373,11 @@ void AudioCollection::AddToCollection(char* otrPath, uint16_t seqNum) {
 }
 
 uint16_t AudioCollection::GetReplacementSequence(uint16_t seqId) {
+    // Nocturne of Time: its own tracks stand in for the vanilla ones first
+    uint16_t nocturne = NocturneMusic_Override(seqId);
+    if (nocturne != seqId) {
+        return nocturne;
+    }
     // if Hyrule Field Morning is about to play, but Hyrule Field is swapped, get the replacement sequence
     // for Hyrule Field instead. Otherwise, leave it alone, so that without any sfx editor modifications we will
     // play the normal track as usual.

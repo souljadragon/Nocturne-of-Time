@@ -50,7 +50,11 @@ struct Menu {
     int itemCursor = 0; // index into Choices()
     int itemScroll = 0;
     int stickDir = 0;
-    bool showLore = false; // Z: the right panel shows the focused item's description and lore
+    // Z steps the right panel: 0 = the item's stats, 1.. = its lore, a page at a time
+    int lorePage = 0;
+    int lorePages = 1;     // how many lore pages the focused item has (counted when drawn)
+    int focusKey = -1;     // which item the panel showed last, to start its lore from page 1
+    unsigned blink = 0;
     int useCursor = 0;     // index into OwnedConsumables()
     int useTarget = 0;     // member receiving the item
     std::string note;      // result of the last item use
@@ -206,7 +210,8 @@ void EquipMenu_Update(void* inputPtr) {
         return;
     }
     if (in.z && (sMenu.page == Page::Slots || sMenu.page == Page::Items)) {
-        sMenu.showLore = !sMenu.showLore;
+        // stats -> lore 1 -> lore 2 (when it runs long) -> stats
+        sMenu.lorePage = sMenu.lorePage >= sMenu.lorePages ? 0 : sMenu.lorePage + 1;
         PlaySfx(NA_SE_SY_CURSOR);
         return;
     }
@@ -587,7 +592,7 @@ void EquipMenu_Draw(PlayState* play) {
     for (int i = 0; i < (int)Slot::Count; i++) {
         int y = kLowerY + 2 + i * 13;
         bool sel = sMenu.page != Page::Members && i == sMenu.slot;
-        if (sel) {
+        if (sel && sMenu.page != Page::Items) {
             p.Text(14, y, "▶", Yellow);
         } else {
             Diamond(p, 14, y);
@@ -639,34 +644,61 @@ void EquipMenu_Draw(PlayState* play) {
     }
     const int bottom = 220;
     int y = kLowerY + 2;
-    if (sMenu.showLore && sMenu.page != Page::Members) {
-        // Lore view: name, rarity, description and the item's story
+    // A new item under the cursor starts its lore from the first page
+    int key = focus == nullptr ? -2 : (int)(sMenu.page == Page::Items ? 100 + sMenu.itemCursor : sMenu.slot);
+    if (key != sMenu.focusKey) {
+        sMenu.focusKey = key;
+        sMenu.lorePage = std::min(sMenu.lorePage, 1);
+    }
+    sMenu.blink++;
+    const bool loreView = sMenu.lorePage > 0 && sMenu.page != Page::Members;
+    if (!loreView) {
+        sMenu.lorePages = 1;
+    }
+    if (loreView) {
+        // Lore view: name, rarity, then the story and the item's effect, 8 lines of 16 a page
         if (focus == nullptr) {
+            sMenu.lorePages = 1;
             p.Text(kRightX, y, "Nothing here.", Grey);
         } else {
-            for (const std::string& l : Wrap(focus->name, kRightChars)) {
-                p.Text(kRightX, y, l, RarityRetro(focus->rarity));
+            constexpr size_t kLoreChars = 16;
+            constexpr int kLoreLines = 8;
+            // Choosing gear, the list is hidden behind the lore: the cursor sits on the item's name instead
+            const bool choosing = sMenu.page == Page::Items;
+            if (choosing) {
+                p.Text(kRightX - 2, y, "▶", Yellow);
+            }
+            for (const std::string& l : Wrap(focus->name, kRightChars - 1)) {
+                p.Text(choosing ? kRightX + 8 : kRightX, y, l, RarityRetro(focus->rarity));
                 y += kLineH;
             }
             p.Text(kRightX, y, Upper(RarityName(focus->rarity)), Grey);
             y += 14;
-            std::string lore = ItemLore(*focus);
-            for (const std::string& l : Wrap(lore, kRightChars)) {
-                if (y > bottom - kLineH) {
-                    break;
+            std::vector<std::pair<std::string, Color>> lines;
+            for (const std::string& l : Wrap(ItemLore(*focus), kLoreChars)) {
+                lines.push_back({ l, Cream });
+            }
+            if (!BaseOf(*focus).effectText.empty()) {
+                if (!lines.empty()) {
+                    lines.push_back({ "", Cream });
                 }
-                p.Text(kRightX, y, l, Cream);
+                for (const std::string& l : Wrap(BaseOf(*focus).effectText, kLoreChars)) {
+                    lines.push_back({ l, Orange });
+                }
+            }
+            int perPage = std::clamp((bottom - y) / kLineH, 1, kLoreLines);
+            sMenu.lorePages = std::max(1, ((int)lines.size() + perPage - 1) / perPage);
+            sMenu.lorePage = std::clamp(sMenu.lorePage, 1, sMenu.lorePages);
+            size_t first = (size_t)(sMenu.lorePage - 1) * perPage;
+            if (first < lines.size() && lines[first].first.empty()) {
+                first++; // don't start a page on the gap before the effect
+            }
+            for (size_t i = first; i < lines.size() && i < first + perPage; i++) {
+                p.Text(kRightX, y, lines[i].first, lines[i].second);
                 y += kLineH;
             }
-            if (!BaseOf(*focus).effectText.empty() && y <= bottom - kLineH) {
-                y += 4;
-                for (const std::string& l : Wrap(BaseOf(*focus).effectText, kRightChars)) {
-                    if (y > bottom - kLineH) {
-                        break;
-                    }
-                    p.Text(kRightX, y, l, Orange);
-                    y += kLineH;
-                }
+            if (sMenu.lorePage < sMenu.lorePages && (sMenu.blink / 8) % 2 == 0) {
+                p.Text(kRightX + kRightW - kCharW, bottom - 8, "▼", Yellow); // more on the next page
             }
         }
     } else if (sMenu.page == Page::Members) {
@@ -767,11 +799,11 @@ void EquipMenu_Draw(PlayState* play) {
         }
     }
 
-    const char* hint = sMenu.page == Page::Members ? "◀▶:TAB  A:EQUIP  B:CLOSE"
-                       : sMenu.page == Page::Slots ? (sMenu.showLore ? "A:CHANGE B:BACK Z:STATS"
-                                                                     : "A:CHANGE B:BACK Z:LORE")
-                                                   : (sMenu.showLore ? "A:EQUIP B:BACK Z:STATS"
-                                                                     : "A:EQUIP B:BACK Z:LORE");
+    const char* zKey = !loreView ? "Z:LORE" : (sMenu.lorePage < sMenu.lorePages ? "Z:MORE" : "Z:STATS");
+    std::string hintText = sMenu.page == Page::Members ? "◀▶:TAB  A:EQUIP  B:CLOSE"
+                           : sMenu.page == Page::Slots ? std::string("A:CHANGE B:BACK ") + zKey
+                                                       : std::string("A:EQUIP B:BACK ") + zKey;
+    const char* hint = hintText.c_str();
     p.Text(14, 226, hint, Grey);
     CLOSE_DISPS(play->state.gfxCtx);
 }

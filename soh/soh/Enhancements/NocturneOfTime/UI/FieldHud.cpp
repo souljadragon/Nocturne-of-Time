@@ -55,7 +55,7 @@ std::string Upper(std::string s) {
 const char* SceneTitle(PlayState* play) {
     switch (play->sceneNum) {
         case SCENE_DEKU_TREE:
-            return "DEKU TREE";
+            return "HOLLOWED HUSK";
         case SCENE_DEKU_TREE_BOSS:
             return "GOHMA'S LAIR";
         default:
@@ -124,8 +124,10 @@ static void DrawFieldHud(PlayState* play) {
             static const char* kDanger[3] = { "CALM", "ALERT", "DANGER" };
             static const Color kDangerColor[3] = { Blue, Yellow, Red };
             int level = Battle_DangerLevel();
-            p.Text(176, barY, "◆", kDangerColor[level]);
-            p.Text(188, barY, kDanger[level], kDangerColor[level]);
+            // after FACING and its letter, clear of the moon box even with DANGER
+            int dangerX = std::max(176, facingX + 8 * kCharW + 4);
+            p.Text(dangerX, barY, "◆", kDangerColor[level]);
+            p.Text(dangerX + 12, barY, kDanger[level], kDangerColor[level]);
         }
         const int moonW = MoonHud_BoxWidth(16);
         MoonHud_DrawBox(p, SCREEN_WIDTH - 6 - moonW, 2, 16);
@@ -149,7 +151,7 @@ static void DrawFieldHud(PlayState* play) {
         }
     }
 
-    // Party cards: portrait, name and condition, HP, MP and level
+    // Party cards: portrait, then name and condition, level, HP and MP
     const std::vector<PartyMember>& members = Party_Members();
     const int cardY = kBottomY, cardH = SCREEN_HEIGHT - 4 - cardY;
     const int count = (int)std::min<size_t>(members.size(), 3);
@@ -167,12 +169,14 @@ static void DrawFieldHud(PlayState* play) {
         const char* cond = c.ailment == Ailment::Poison ? "PSN" : (c.ailment == Ailment::Burn ? "BRN" : "GOOD");
         p.TextRight(x + cardW - 6, cardY + 6, cond,
                     c.ailment == Ailment::Poison ? Violet : (c.ailment == Ailment::Burn ? Orange : Green));
+        // Four lines, 10px apart: name + condition, LV, HP, MP
         char line[24];
+        snprintf(line, sizeof(line), "LV %d", c.level);
+        p.Text(tx, cardY + 16, line, Green);
         snprintf(line, sizeof(line), "HP %d/%d", c.hp, c.maxHp);
-        p.Text(tx, cardY + 17, line, c.hp * 4 <= c.maxHp ? Red : White);
+        p.Text(tx, cardY + 26, line, c.hp * 4 <= c.maxHp ? Red : White);
         snprintf(line, sizeof(line), "MP %d/%d", c.mp, c.maxMp);
-        p.Text(tx, cardY + 28, line, White);
-        p.TextRight(x + cardW - 6, cardY + 28, "LV" + std::to_string(c.level), Green);
+        p.Text(tx, cardY + 36, line, White);
     }
 
     MoonHud_Tick();

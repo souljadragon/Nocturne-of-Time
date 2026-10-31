@@ -19,6 +19,7 @@
 #include "../Party.h"
 #include "../DungeonCrawler.h"
 #include "../Boss/BossGate.h"
+#include "../Audio/NocturneMusic.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -610,6 +611,7 @@ void StartRandomBattle(PlayState* play, Player* player) {
         enemies.push_back(MakeEnemy(k));
     }
     StartBattle(play, player, enemies, false);
+    NocturneMusic_StartBattle(play);
 }
 
 void StartBossBattle(PlayState* play, Player* player) {
@@ -699,6 +701,9 @@ void EndBattle() {
         }
     }
     KillEnemyActors();
+    if (!sScene.boss && !sScene.defeat) {
+        NocturneMusic_EndBattle(gPlayState);
+    }
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
     sScene.battle.reset();
@@ -844,7 +849,7 @@ void QueueRewards() {
         sScene.queue.push_back(HeldMessage("Got a Heart Container!\nMax HP +" + std::to_string(kHeartContainerHp) +
                                                " for everyone.",
                                            0xF8380000u));
-        sScene.queue.push_back(HeldMessage("The Deku Tree is cleansed!", 0x58D85400u));
+        sScene.queue.push_back(HeldMessage("The Hollowed Husk is cleansed!", 0x58D85400u));
         BossGate_SetCleared();
         Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS_CLEAR);
     } else {

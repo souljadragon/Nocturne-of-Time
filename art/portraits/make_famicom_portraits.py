@@ -56,7 +56,16 @@ FIXES = {
     ("A", "saria"): [(22, 31, _c(0xE45C10)), (23, 31, _c(0xE45C10)), (24, 31, _c(0xE45C10)), (21, 30, _c(0xF87858)),
                      (25, 30, _c(0xF87858))],
     # Zelda's diadem gem, a clear red stone at 48px
-    ("A", "zelda"): [(23, 12, _c(0xF83800)), (24, 12, _c(0xF83800)), (23, 13, _c(0xA81000)), (24, 13, _c(0xA81000))],
+    ("A", "zelda"): [(23, 12, _c(0xF83800)), (24, 12, _c(0xF83800)), (23, 13, _c(0xA81000)), (24, 13, _c(0xA81000)),
+                     # her right eye (viewer's right) had stray blue; now it matches the left (art chat, Oct 27)
+                     (28, 22, _c(0x503000)), (29, 22, _c(0x503000)), (30, 22, _c(0x503000)), (31, 22, _c(0xD8B8F8)),
+                     (32, 22, _c(0x503000))],
+}
+
+# Colour swaps after the conversion: name -> {from: to}
+SWAPS = {
+    # Ruto pushed toward blue so she doesn't blur with Saria's green (art chat, Oct 27)
+    "ruto": {_c(0x58F898): _c(0xB8B8F8), _c(0x008888): _c(0x0078F8)},
 }
 
 STYLES = {"A": (48, 5, False), "B": (32, 4, False), "C": (40, 5, True)}  # size, main colours (+1 accent, black), ink
@@ -163,6 +172,13 @@ def main():
         for name in src.ORDER:
             f = famicom(crops[name], size, colors, ink, name)
             fp = f.load()
+            swaps = SWAPS.get(name, {})
+            if swaps:
+                for y in range(f.size[1]):
+                    for x in range(f.size[0]):
+                        px = fp[x, y]
+                        if px[:3] in swaps:
+                            fp[x, y] = swaps[px[:3]] + tuple(px[3:])
             for x, y, c in FIXES.get((style, name), []):
                 fp[x, y] = c
             f.save(os.path.join(OUT, f"portrait_{style}_{name}_{size}.png"))
