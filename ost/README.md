@@ -54,3 +54,10 @@ Shop theme for **Kokiri Haven**, the hub (Kokiri Forest, renamed). The hub isn't
 - `tools/dungeon_mix/session_d.py`: the Dungeon Theme stem mix and master, in one script. It uses `mix.py` and `common.py` from `tools/mix/`. Stems go in `stems/` named after their part (`piano.wav`, `organ.wav`, …), plus the reference as `stems/ref.mp3`.
 
 Stems aren't stored here; the user keeps them in the FL Studio projects.
+
+## Getting a track into the game
+The game doesn't read these WAVs directly. `python3 ost/tools/pack_game_audio.py` splits each game WAV
+into left/right mono samples (cut at the `smpl` loop end) and writes the streamed sequence, sound font and
+sample files under `soh/assets/custom/custom/`, which the build packs into `soh.o2r`. Rerun it and commit
+its output whenever a game WAV changes. New tracks: add them to `TRACKS` in the script and map them to a
+place in `soh/soh/Enhancements/NocturneOfTime/Audio/NocturneMusic.cpp`.
