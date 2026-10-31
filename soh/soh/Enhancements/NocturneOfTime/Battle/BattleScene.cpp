@@ -58,7 +58,7 @@ constexpr int kStartLevel = 5;
 constexpr float kDropChance = 0.35f; // per defeated enemy
 constexpr int kMaxDrops = 2;         // per battle
 constexpr f32 kEnemyDistance = 160.0f;
-constexpr f32 kEnemyMinDistance = 90.0f;
+constexpr f32 kEnemyMinDistance = 110.0f; // adult eye height: any nearer and their feet drop out of the view
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
 constexpr f32 kBossDistance = 250.0f;    // Queen Gohma stands further back: she's big
 constexpr f32 kBossMinDistance = 200.0f;
@@ -318,6 +318,31 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
         squeeze *= sizeScale;
     }
     const f32 shift = 0.0f;
+
+    // Walls or pillars between the camera and an outer slot (a room that tapers off to one side): squeeze the
+    // whole row toward the middle until every enemy is in plain sight, rather than pulling that one enemy
+    // toward the camera, where it ends up big, low and cut off by the bottom of the view.
+    auto inSight = [&](f32 lateral) {
+        Vec3f eyeA = { origin.x, origin.y + 30.0f, origin.z };
+        Vec3f eyeB = { centre.x + right.x * lateral, origin.y + 30.0f, centre.z + right.z * lateral };
+        Vec3f hit;
+        CollisionPoly* hitPoly;
+        s32 hitBg;
+        return !BgCheck_EntityLineTest1(&play->colCtx, &eyeA, &eyeB, &hit, &hitPoly, true, false, false, true, &hitBg);
+    };
+    for (int tries = 0; tries < 12; tries++) {
+        bool allClear = true;
+        f32 c = -rowWidth * 0.5f;
+        for (size_t i = 0; i < enemies.size() && allClear; i++) {
+            f32 w = widthOf(enemies[i].kind);
+            allClear = inSight((c + w * 0.5f) * squeeze + shift);
+            c += w + kEnemyGap;
+        }
+        if (allClear || squeeze <= 0.3f) {
+            break;
+        }
+        squeeze = std::max(0.3f, squeeze * 0.85f);
+    }
 
     sScene.enemyActors.clear();
     f32 cursor = -rowWidth * 0.5f;
