@@ -1,6 +1,6 @@
 // Nocturne of Time: unit tests for the battle rules. Not part of the game build.
 // Build and run (from this folder):
-//   g++ -std=c++20 BattleEngineTests.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.cpp -o battle_tests
+//   g++ -std=c++20 BattleEngineTests.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.cpp ../../soh/soh/Enhancements/NocturneOfTime/Relics/Relics.cpp -o battle_tests
 //   ./battle_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
@@ -46,6 +46,8 @@ struct ScriptedRng {
 static std::function<float()> Steady() {
     return [] { return 0.5f; };
 }
+
+static int FindSkill(const Combatant& c, const char* name);
 
 static bool HasEvent(const Events& events, BattleEvent::Type type) {
     for (const BattleEvent& e : events) {
@@ -477,8 +479,9 @@ static void TestBossPressTurns() {
     CHECK(b.Phase() == BattlePhase::PartyCommand);
 
     // Her eye: the slingshot (Pierce) hits a weakness for an extra half turn
-    Battle c({ MakeLink(8), MakeSaria(8) }, { MakeQueenGohma(2) }, Steady());
-    Events ev = c.UseSkill(2, 0);
+    Combatant slinger = GohmaPolicy::Known(MakeLink(8));
+    Battle c({ slinger, MakeSaria(8) }, { MakeQueenGohma(2) }, Steady());
+    Events ev = c.UseSkill(FindSkill(slinger, "Slingshot"), 0);
     CHECK(HasEvent(ev, BattleEvent::Type::Weak));
     CHECK(c.Icons().solid == 1 && c.Icons().blinking == 1);
 }
@@ -645,7 +648,7 @@ static void TestStages() {
     CHECK(std::fabs(StageFactor(-2) - 1.0f / 1.5f) < 0.001f);
     CHECK(StageFactor(9) == StageFactor(kMaxStage));
 
-    Combatant link = MakeLink(10), saria = MakeSaria(10);
+    Combatant link = GohmaPolicy::Known(MakeLink(10)), saria = MakeSaria(10);
     CHECK(FindSkill(link, "Din's Blessing") > 0 && FindSkill(link, "Dispelling Sun") > 0);
     CHECK(FindSkill(saria, "Cleansing Lullaby") > 0 && FindSkill(saria, "Mire Hex") > 0);
 

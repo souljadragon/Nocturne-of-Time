@@ -3,6 +3,7 @@
 //   smart - also strips her shell, guards the charged blow, cleanses hexes and blesses the party
 #pragma once
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
+#include "../../soh/soh/Enhancements/NocturneOfTime/Relics/Relics.h"
 #include <cstdio>
 #include <random>
 
@@ -17,6 +18,19 @@ inline Combatant Known(Combatant c) {
         }
     }
     c.skills = k;
+    if (c.name == "Link") {
+        // By the gate: the Slingshot mastered, and the Kokiri Ocarina worn to mastery 2
+        for (const RelicSkill& rs : RelicOf(RelicId::FairySlingshot).skills) {
+            if (rs.mastery == 0) {
+                c.skills.push_back(rs.skill);
+            }
+        }
+        for (const RelicSkill& rs : RelicOf(RelicId::KokiriOcarina).skills) {
+            if (rs.mastery <= 1) {
+                c.skills.push_back(rs.skill);
+            }
+        }
+    }
     return c;
 }
 

@@ -39,7 +39,8 @@ constexpr int kStartLevel = 5; // matches the battle scene, used if the menu ope
 constexpr int kVisibleItems = 5; // equip choices shown at once (matches the status screen)
 
 // Members: pick a member (or the "Items" row below them). Slots/Items: equipment. Use/UseTarget: consumables.
-enum class Page { Closed, Members, Slots, Items, Use, UseTarget };
+// Skills: a member's active skills and the pool to choose from (and Link's Relic). Relics: choosing Link's Relic.
+enum class Page { Closed, Members, Slots, Items, Use, UseTarget, Skills, Relics };
 
 const char* kSlotLabels[(size_t)Slot::Count] = { "Weapon", "Armor", "Acc." };
 
@@ -58,6 +59,12 @@ struct Menu {
     int useCursor = 0;     // index into OwnedConsumables()
     int useTarget = 0;     // member receiving the item
     std::string note;      // result of the last item use
+    // Skills page: 0 = Link's Relic row, 1 = active list, 2 = learned pool
+    int skillCol = 1;
+    int activeCursor = 0;
+    int poolCursor = 0;
+    int poolScroll = 0;
+    int relicCursor = 0;
 };
 
 Menu sMenu;
@@ -147,6 +154,145 @@ void Move(int& cursor, int count, bool up) {
     PlaySfx(NA_SE_SY_CURSOR);
 }
 
+// ---- Skills and Relics pages -----------------------------------------------------------------------------
+
+constexpr int kSkillRowsShown = 8;
+
+bool IsLink() {
+    const std::vector<PartyMember>& members = Party_Members();
+    return sMenu.member < (int)members.size() && members[sMenu.member].base.name == "Link";
+}
+
+std::vector<int> OwnedRelics() {
+    std::vector<int> out;
+    for (int i = 0; i < (int)RelicId::Count; i++) {
+        if (Party_Relics()[i].owned) {
+            out.push_back(i);
+        }
+    }
+    return out;
+}
+
+void UpdateSkillsPage(const Buttons& in) {
+    std::vector<PartyMember>& members = Party_Members();
+    if (sMenu.member >= (int)members.size()) {
+        sMenu.page = Page::Members;
+        return;
+    }
+    PartyMember& m = members[sMenu.member];
+    std::vector<PoolSkill> pool = Party_SkillPool(m);
+    int activeCount = (int)m.activeSkills.size();
+    sMenu.activeCursor = std::clamp(sMenu.activeCursor, 0, kMaxActiveSkills - 1);
+    sMenu.poolCursor = std::clamp(sMenu.poolCursor, 0, std::max(0, (int)pool.size() - 1));
+    if (sMenu.skillCol == 0 && !IsLink()) {
+        sMenu.skillCol = 1;
+    }
+
+    if (in.b) {
+        sMenu.page = Page::Members;
+        sMenu.note.clear();
+        PlaySfx(NA_SE_SY_CANCEL);
+        return;
+    }
+    if (in.left || in.right) {
+        if (sMenu.skillCol != 0) {
+            sMenu.skillCol = sMenu.skillCol == 1 ? 2 : 1;
+            PlaySfx(NA_SE_SY_CURSOR);
+        }
+        return;
+    }
+    if (in.up || in.down) {
+        if (sMenu.skillCol == 0) {
+            if (in.down) {
+                sMenu.skillCol = 1;
+                sMenu.activeCursor = 0;
+                PlaySfx(NA_SE_SY_CURSOR);
+            }
+        } else if (sMenu.skillCol == 1) {
+            if (in.up && sMenu.activeCursor == 0 && IsLink()) {
+                sMenu.skillCol = 0; // up from the top: the Relic
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else {
+                Move(sMenu.activeCursor, kMaxActiveSkills, in.up);
+            }
+        } else if (!pool.empty()) {
+            if (in.up && sMenu.poolCursor == 0 && IsLink()) {
+                sMenu.skillCol = 0;
+                PlaySfx(NA_SE_SY_CURSOR);
+            } else {
+                Move(sMenu.poolCursor, (int)pool.size(), in.up);
+            }
+            if (sMenu.poolCursor < sMenu.poolScroll) {
+                sMenu.poolScroll = sMenu.poolCursor;
+            } else if (sMenu.poolCursor >= sMenu.poolScroll + kSkillRowsShown) {
+                sMenu.poolScroll = sMenu.poolCursor - kSkillRowsShown + 1;
+            }
+        }
+        return;
+    }
+    if (!in.a) {
+        return;
+    }
+    sMenu.note.clear();
+    if (sMenu.skillCol == 0) {
+        std::vector<int> owned = OwnedRelics();
+        sMenu.relicCursor = 0;
+        for (int i = 0; i < (int)owned.size(); i++) {
+            if (owned[i] == Party_EquippedRelic()) {
+                sMenu.relicCursor = i;
+            }
+        }
+        sMenu.page = Page::Relics;
+        PlaySfx(NA_SE_SY_DECIDE);
+    } else if (sMenu.skillCol == 1) {
+        // Take the skill in this slot out
+        if (sMenu.activeCursor < activeCount) {
+            Party_DeactivateSkill(m, m.activeSkills[sMenu.activeCursor]);
+            PlaySfx(NA_SE_SY_CANCEL);
+        } else {
+            sMenu.skillCol = 2; // an empty slot: go pick something for it
+            PlaySfx(NA_SE_SY_CURSOR);
+        }
+    } else if (!pool.empty()) {
+        const std::string& name = pool[sMenu.poolCursor].skill.name;
+        if (Party_IsActive(m, name)) {
+            Party_DeactivateSkill(m, name);
+            PlaySfx(NA_SE_SY_CANCEL);
+        } else if (Party_ActivateSkill(m, name)) {
+            PlaySfx(NA_SE_SY_DECIDE);
+        } else {
+            sMenu.note = "Only 8 skills fit. Take one off first.";
+            PlaySfx(NA_SE_SY_ERROR);
+        }
+    }
+}
+
+void UpdateRelicsPage(const Buttons& in) {
+    std::vector<int> owned = OwnedRelics();
+    if (owned.empty() || in.b) {
+        sMenu.page = Page::Skills;
+        PlaySfx(NA_SE_SY_CANCEL);
+        return;
+    }
+    sMenu.relicCursor = std::clamp(sMenu.relicCursor, 0, (int)owned.size() - 1);
+    if (in.up || in.down) {
+        Move(sMenu.relicCursor, (int)owned.size(), in.up);
+    } else if (in.a) {
+        int id = owned[sMenu.relicCursor];
+        if (id == Party_EquippedRelic()) {
+            Party_UnequipRelic();
+            PlaySfx(NA_SE_SY_CANCEL);
+        } else {
+            Party_EquipRelic((RelicId)id);
+            PlaySfx(NA_SE_SY_DECIDE);
+            sMenu.page = Page::Skills;
+        }
+        for (PartyMember& pm : Party_Members()) {
+            Party_ClampToMax(pm);
+        }
+    }
+}
+
 void RegisterEquipMenu() {
     bool enabled = CVAR_CRAWLER_VALUE != 0;
     if (!enabled) {
@@ -216,7 +362,27 @@ void EquipMenu_Update(void* inputPtr) {
         return;
     }
 
+    if (in.z && sMenu.page == Page::Members && !OnItemsRow()) {
+        Party_RefreshAllSkills();
+        sMenu.page = Page::Skills;
+        sMenu.skillCol = 1;
+        sMenu.activeCursor = 0;
+        sMenu.poolCursor = 0;
+        sMenu.poolScroll = 0;
+        sMenu.note.clear();
+        PlaySfx(NA_SE_SY_DECIDE);
+        return;
+    }
+
     switch (sMenu.page) {
+        case Page::Skills:
+            UpdateSkillsPage(in);
+            break;
+
+        case Page::Relics:
+            UpdateRelicsPage(in);
+            break;
+
         case Page::Members:
             if (in.left || in.right) {
                 Move(sMenu.member, (int)members.size() + 1, in.left); // the tabs: members, then ITEMS
@@ -531,6 +697,226 @@ static void DrawItemsView(PlayState* play) {
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// What kind of skill, for the lists: element, or Heal / Bless / Hex / Dispel
+static std::string SkillKind(const Skill& s) {
+    if (s.heal) {
+        return "Heal";
+    }
+    if (s.dispelBuffs || s.dispelDebuffs) {
+        return "Dispel";
+    }
+    if (s.IsSupport()) {
+        return s.target == TargetType::AllEnemies ? "Hex" : "Bless";
+    }
+    return ElementName(s.element);
+}
+
+static std::string SkillCost(const Skill& s) {
+    return s.mpCost > 0 ? std::to_string(s.mpCost) + "MP" : (s.hpCost > 0 ? std::to_string(s.hpCost) + "HP" : "");
+}
+
+// Link's Relic: name, mastery and its bar, affinities and what it teaches (y is the box's top)
+static void DrawRelicBox(Retro::Painter& p, int y, bool selected) {
+    using namespace Retro;
+    int equipped = Party_EquippedRelic();
+    p.Window(10, y, SCREEN_WIDTH - 20, 62, selected ? Yellow : White);
+    if (selected) {
+        p.Text(14, y + 6, "▶", Yellow);
+    }
+    p.Text(24, y + 6, "RELIC", Green);
+    if (equipped < 0) {
+        p.Text(72, y + 6, "None", Grey);
+        p.Text(24, y + 20, "A: choose a Relic to learn from.", Grey);
+        return;
+    }
+    const RelicDef& def = RelicOf((RelicId)equipped);
+    int points = Party_Relics()[equipped].points;
+    int mastery = RelicMastery(def, points);
+    p.Text(72, y + 6, def.name, selected ? Yellow : White);
+    char lv[24];
+    snprintf(lv, sizeof(lv), mastery >= def.MaxMastery() ? "MASTERED" : "M%d/%d", mastery, def.MaxMastery());
+    p.TextRight(SCREEN_WIDTH - 16, y + 6, lv, mastery >= def.MaxMastery() ? Orange : Yellow);
+    // Progress to the next mastery level
+    p.Bar(24, y + 18, 20, (int)std::lround(RelicProgress(def, points) * 20), 6, 7, 1, Yellow, GreenDark);
+    if (mastery < def.MaxMastery()) {
+        p.Text(168, y + 18, "NEXT", Green);
+        p.TextRight(SCREEN_WIDTH - 16, y + 18, std::to_string(RelicPointsToNext(def, points)), White);
+    }
+    p.Text(24, y + 29, RelicAffinityText(def), Cream);
+    // Its skills: learned for good (white with ✻), usable while equipped (blue), not yet (grey, with the level)
+    for (size_t i = 0; i < def.skills.size() && i < 4; i++) {
+        const RelicSkill& rs = def.skills[i];
+        int x = 24 + (int)(i % 2) * 144, ry = y + 40 + (int)(i / 2) * 10;
+        bool permanent = mastery > rs.mastery, usable = mastery >= rs.mastery;
+        std::string label = Fit(rs.skill.name, 13);
+        if (permanent) {
+            p.Text(x, ry, "✻" + label, White);
+        } else if (usable) {
+            p.Text(x + 8, ry, label, Blue);
+        } else {
+            p.Text(x + 8, ry, Fit(rs.skill.name, 10) + " M" + std::to_string(rs.mastery), Grey);
+        }
+    }
+}
+
+// SKILLS: the active list (left, up to 8) and everything learned (right); Link's Relic on top
+static void DrawSkillsView(PlayState* play) {
+    using namespace Retro;
+    std::vector<PartyMember>& members = Party_Members();
+    const PartyMember& m = members[std::clamp(sMenu.member, 0, (int)members.size() - 1)];
+    std::vector<PoolSkill> pool = Party_SkillPool(m);
+    bool link = m.base.name == "Link";
+
+    OPEN_DISPS(play->state.gfxCtx);
+    Painter p(&OVERLAY_DISP);
+    p.FillScreen(Black);
+    DrawTabs(p, sMenu.member);
+    p.Text(14, 20, "✻" + Upper(m.base.name) + "✻", White);
+    char count[24];
+    snprintf(count, sizeof(count), "SKILLS %d/%d", (int)m.activeSkills.size(), kMaxActiveSkills);
+    p.TextRight(SCREEN_WIDTH - 14, 20, count, Green);
+
+    int top = 32;
+    if (link) {
+        DrawRelicBox(p, top, sMenu.page == Page::Skills && sMenu.skillCol == 0);
+        top += 64;
+    }
+    const int rowH = 11;
+    const int leftX = 14, rightX = 168;
+    p.Text(leftX + 8, top, "ACTIVE", Green);
+    p.Text(rightX + 8, top, "LEARNED", Green);
+    p.Rect(kColDivX, top, 2, rowH * kSkillRowsShown + 12, White);
+    int listY = top + 12;
+
+    // Left: the 8 slots
+    for (int i = 0; i < kMaxActiveSkills; i++) {
+        int y = listY + i * rowH;
+        bool sel = sMenu.skillCol == 1 && i == sMenu.activeCursor;
+        if (sel) {
+            p.Text(leftX, y, "▶", Yellow);
+        }
+        if (i < (int)m.activeSkills.size()) {
+            p.Text(leftX + 9, y, Fit(m.activeSkills[i], 17), sel ? Yellow : White);
+        } else {
+            p.Text(leftX + 9, y, "-----", sel ? Yellow : GreenDark);
+        }
+    }
+    // Right: the pool, scrolling; active ones marked
+    int first = std::clamp(sMenu.poolScroll, 0, std::max(0, (int)pool.size() - kSkillRowsShown));
+    for (int r = 0; r < kSkillRowsShown && first + r < (int)pool.size(); r++) {
+        int i = first + r;
+        const PoolSkill& ps = pool[i];
+        int y = listY + r * rowH;
+        bool sel = sMenu.skillCol == 2 && i == sMenu.poolCursor;
+        bool active = Party_IsActive(m, ps.skill.name);
+        if (sel) {
+            p.Text(rightX, y, "▶", Yellow);
+        }
+        Color c = sel ? Yellow : (!ps.permanent ? Blue : (active ? White : Grey));
+        p.Text(rightX + 9, y, Fit(ps.skill.name, 15), c);
+        if (active) {
+            p.TextRight(SCREEN_WIDTH - 12, y, "◆", Green);
+        }
+    }
+    if ((int)pool.size() > kSkillRowsShown) {
+        char more[16];
+        snprintf(more, sizeof(more), "%d/%d", sMenu.poolCursor + 1, (int)pool.size());
+        p.TextRight(SCREEN_WIDTH - 14, top, more, Grey);
+    }
+
+    // The highlighted skill, or a note
+    const Skill* focus = nullptr;
+    if (sMenu.skillCol == 1 && sMenu.activeCursor < (int)m.activeSkills.size()) {
+        for (const PoolSkill& ps : pool) {
+            if (ps.skill.name == m.activeSkills[sMenu.activeCursor]) {
+                focus = &ps.skill;
+            }
+        }
+    } else if (sMenu.skillCol == 2 && sMenu.poolCursor < (int)pool.size()) {
+        focus = &pool[sMenu.poolCursor].skill;
+    }
+    int infoY = listY + kSkillRowsShown * rowH + 2;
+    if (!sMenu.note.empty()) {
+        p.Text(14, infoY, Fit(sMenu.note, 37), Red);
+    } else if (focus != nullptr) {
+        std::string head = SkillKind(*focus) + " " + SkillCost(*focus);
+        std::vector<std::string> lines = Wrap(focus->description, 37 - head.size() - 1);
+        p.Text(14, infoY, lines.empty() ? "" : lines[0], Cream);
+        p.TextRight(SCREEN_WIDTH - 12, infoY, head, Green);
+        if (lines.size() > 1 && infoY + kLineH < 222) {
+            std::string rest;
+            for (size_t i = 1; i < lines.size(); i++) {
+                rest += (i > 1 ? " " : "") + lines[i];
+            }
+            p.Text(14, infoY + kLineH, Fit(rest, 37), Cream);
+        }
+    }
+    const char* hint = sMenu.skillCol == 0 ? "A:CHANGE RELIC  B:BACK"
+                       : sMenu.skillCol == 1 ? "A:TAKE OFF  ◀▶:LEARNED  B:BACK"
+                                             : "A:SET/TAKE OFF  ◀▶:ACTIVE  B:BACK";
+    p.Text(14, 228, hint, Grey);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// RELICS: Link's Relics with their mastery; the highlighted one in detail
+static void DrawRelicsView(PlayState* play) {
+    using namespace Retro;
+    std::vector<int> owned = OwnedRelics();
+    int cursor = owned.empty() ? 0 : std::clamp(sMenu.relicCursor, 0, (int)owned.size() - 1);
+
+    OPEN_DISPS(play->state.gfxCtx);
+    Painter p(&OVERLAY_DISP);
+    p.FillScreen(Black);
+    DrawTabs(p, sMenu.member);
+    p.Text(14, 20, "✻LINK✻", White);
+    p.TextRight(SCREEN_WIDTH - 14, 20, "RELICS", Green);
+
+    p.Rect(kColDivX, 34, 2, 186, White);
+    for (int i = 0; i < (int)owned.size(); i++) {
+        const RelicDef& def = RelicOf((RelicId)owned[i]);
+        int points = Party_Relics()[owned[i]].points;
+        int y = 36 + i * 24;
+        bool sel = i == cursor;
+        bool equipped = owned[i] == Party_EquippedRelic();
+        if (sel) {
+            p.Text(14, y, "▶", Yellow);
+        }
+        p.Text(24, y, Fit(def.name, 14), sel ? Yellow : White);
+        if (equipped) {
+            p.TextRight(kColDivX - 6, y, "E", Green);
+        }
+        int mastery = RelicMastery(def, points);
+        p.Bar(24, y + 11, 10, (int)std::lround(RelicProgress(def, points) * 10), 6, 6, 1, Yellow, GreenDark);
+        p.TextRight(kColDivX - 6, y + 11,
+                    mastery >= def.MaxMastery() ? "MAX" : "M" + std::to_string(mastery), Yellow);
+    }
+    if (!owned.empty()) {
+        const RelicDef& def = RelicOf((RelicId)owned[cursor]);
+        int mastery = RelicMastery(def, Party_Relics()[owned[cursor]].points);
+        int y = 36;
+        for (const std::string& l : Wrap(def.description, kRightChars)) {
+            p.Text(kRightX, y, l, Cream);
+            y += kLineH;
+        }
+        y += 4;
+        for (const auto& [element, affinity] : def.affinities) {
+            p.Text(kRightX, y, std::string(affinity == Affinity::Weak ? "Weak " : "Resist ") + ElementName(element),
+                   affinity == Affinity::Weak ? Red : Green);
+            y += kLineH;
+        }
+        y += 4;
+        for (const RelicSkill& rs : def.skills) {
+            bool permanent = mastery > rs.mastery, usable = mastery >= rs.mastery;
+            Color c = permanent ? White : (usable ? Blue : Grey);
+            p.Text(kRightX, y, (permanent ? "✻" : " ") + Fit(rs.skill.name, kRightChars - 4), c);
+            p.TextRight(SCREEN_WIDTH - 10, y, "M" + std::to_string(rs.mastery), c);
+            y += kLineH;
+        }
+    }
+    p.Text(14, 228, "A:EQUIP (AGAIN: REMOVE)  B:BACK", Grey);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 void EquipMenu_Draw(PlayState* play) {
     using namespace Retro;
     if (sMenu.page == Page::Closed) {
@@ -542,6 +928,14 @@ void EquipMenu_Draw(PlayState* play) {
     }
     if (OnItemsRow() || sMenu.page == Page::Use || sMenu.page == Page::UseTarget) {
         DrawItemsView(play);
+        return;
+    }
+    if (sMenu.page == Page::Skills) {
+        DrawSkillsView(play);
+        return;
+    }
+    if (sMenu.page == Page::Relics) {
+        DrawRelicsView(play);
         return;
     }
     sMenu.member = std::clamp(sMenu.member, 0, (int)members.size() - 1);
@@ -800,7 +1194,7 @@ void EquipMenu_Draw(PlayState* play) {
     }
 
     const char* zKey = !loreView ? "Z:LORE" : (sMenu.lorePage < sMenu.lorePages ? "Z:MORE" : "Z:STATS");
-    std::string hintText = sMenu.page == Page::Members ? "◀▶:TAB  A:EQUIP  B:CLOSE"
+    std::string hintText = sMenu.page == Page::Members ? "◀▶:TAB A:EQUIP Z:SKILLS B:CLOSE"
                            : sMenu.page == Page::Slots ? std::string("A:CHANGE B:BACK ") + zKey
                                                        : std::string("A:EQUIP B:BACK ") + zKey;
     const char* hint = hintText.c_str();

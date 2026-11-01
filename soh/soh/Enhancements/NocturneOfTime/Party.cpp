@@ -9,6 +9,8 @@ namespace {
 std::vector<PartyMember> sMembers;
 std::vector<Item> sBag;
 std::array<int, (size_t)ConsumableId::Count> sConsumables{};
+std::array<RelicState, (size_t)RelicId::Count> sRelics{};
+int sEquippedRelic = -1;
 
 void StartingConsumables() {
     sConsumables.fill(0);
@@ -91,6 +93,10 @@ void Party_EnsureCreated(int startLevel) {
 
     sMembers = { link, saria };
     StartingConsumables();
+    sRelics = {};
+    sEquippedRelic = -1;
+    Party_GiveRelic(RelicId::FairySlingshot); // Link's from the start
+    Party_RefreshAllSkills();
     Party_HealAll();
 }
 
@@ -98,18 +104,194 @@ void Party_Reset() {
     sMembers.clear();
     sBag.clear();
     sConsumables.fill(0);
+    sRelics = {};
+    sEquippedRelic = -1;
+}
+
+// ---- Skills and Relics ---------------------------------------------------------------------------------
+
+std::vector<PoolSkill> Party_SkillPool(const PartyMember& member) {
+    std::vector<PoolSkill> pool;
+    const Combatant& c = member.base;
+    for (size_t i = 1; i < c.skills.size(); i++) {
+        if (c.skills[i].learnLevel <= c.level) {
+            pool.push_back({ c.skills[i], false, true });
+        }
+    }
+    if (c.name == "Link") {
+        for (int r = 0; r < (int)RelicId::Count; r++) {
+            const RelicState& st = sRelics[r];
+            if (!st.owned) {
+                continue;
+            }
+            const RelicDef& def = RelicOf((RelicId)r);
+            int mastery = RelicMastery(def, st.points);
+            bool equipped = sEquippedRelic == r;
+            for (const RelicSkill& rs : def.skills) {
+                bool permanent = mastery > rs.mastery;
+                bool usable = permanent || (equipped && mastery >= rs.mastery);
+                if (!usable) {
+                    continue;
+                }
+                bool dup = false;
+                for (PoolSkill& p : pool) {
+                    if (p.skill.name == rs.skill.name) {
+                        dup = true;
+                        p.permanent = p.permanent || permanent;
+                    }
+                }
+                if (!dup) {
+                    pool.push_back({ rs.skill, true, permanent });
+                }
+            }
+        }
+    }
+    return pool;
+}
+
+bool Party_IsActive(const PartyMember& member, const std::string& name) {
+    return std::find(member.activeSkills.begin(), member.activeSkills.end(), name) != member.activeSkills.end();
+}
+
+void Party_RefreshSkills(PartyMember& m) {
+    std::vector<PoolSkill> pool = Party_SkillPool(m);
+    auto inPool = [&](const std::string& n) {
+        for (const PoolSkill& p : pool) {
+            if (p.skill.name == n) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Drop what's no longer available (an unmastered skill whose Relic came off). It's offered again when it
+    // comes back, so wearing the Relic again brings it straight back into the list.
+    m.activeSkills.erase(std::remove_if(m.activeSkills.begin(), m.activeSkills.end(),
+                                        [&](const std::string& n) { return !inPool(n); }),
+                         m.activeSkills.end());
+    m.seenSkills.erase(std::remove_if(m.seenSkills.begin(), m.seenSkills.end(),
+                                      [&](const std::string& n) { return !inPool(n); }),
+                       m.seenSkills.end());
+    // Offer what's new
+    for (const PoolSkill& p : pool) {
+        const std::string& n = p.skill.name;
+        bool seen = std::find(m.seenSkills.begin(), m.seenSkills.end(), n) != m.seenSkills.end();
+        if (!seen) {
+            m.seenSkills.push_back(n);
+            if ((int)m.activeSkills.size() < kMaxActiveSkills && !Party_IsActive(m, n)) {
+                m.activeSkills.push_back(n);
+            }
+        }
+    }
+}
+
+void Party_RefreshAllSkills() {
+    for (PartyMember& m : sMembers) {
+        Party_RefreshSkills(m);
+    }
+}
+
+bool Party_ActivateSkill(PartyMember& m, const std::string& name) {
+    if (Party_IsActive(m, name) || (int)m.activeSkills.size() >= kMaxActiveSkills) {
+        return false;
+    }
+    for (const PoolSkill& p : Party_SkillPool(m)) {
+        if (p.skill.name == name) {
+            m.activeSkills.push_back(name);
+            return true;
+        }
+    }
+    return false;
+}
+
+void Party_DeactivateSkill(PartyMember& m, const std::string& name) {
+    m.activeSkills.erase(std::remove(m.activeSkills.begin(), m.activeSkills.end(), name), m.activeSkills.end());
+}
+
+std::array<RelicState, (size_t)RelicId::Count>& Party_Relics() {
+    return sRelics;
+}
+
+int Party_EquippedRelic() {
+    return sEquippedRelic;
+}
+
+bool Party_GiveRelic(RelicId id) {
+    RelicState& st = sRelics[(size_t)id];
+    if (st.owned) {
+        return false;
+    }
+    st.owned = true;
+    if (sEquippedRelic < 0) {
+        sEquippedRelic = (int)id;
+    }
+    Party_RefreshAllSkills();
+    return true;
+}
+
+bool Party_EquipRelic(RelicId id) {
+    if (!sRelics[(size_t)id].owned) {
+        return false;
+    }
+    sEquippedRelic = (int)id;
+    Party_RefreshAllSkills();
+    return true;
+}
+
+void Party_UnequipRelic() {
+    sEquippedRelic = -1;
+    Party_RefreshAllSkills();
+}
+
+std::vector<std::string> Party_AddRelicMastery(int points) {
+    std::vector<std::string> out;
+    if (sEquippedRelic < 0 || points <= 0) {
+        return out;
+    }
+    RelicState& st = sRelics[sEquippedRelic];
+    const RelicDef& def = RelicOf((RelicId)sEquippedRelic);
+    int before = RelicMastery(def, st.points);
+    st.points += points;
+    int after = RelicMastery(def, st.points);
+    for (int level = before + 1; level <= after; level++) {
+        out.push_back(level >= def.MaxMastery() ? def.name + " is mastered!"
+                                                 : def.name + " reached mastery " + std::to_string(level) + "!");
+        for (const RelicSkill& rs : def.skills) {
+            if (rs.mastery == level - 1) {
+                out.push_back("Link learned " + rs.skill.name + " for good!");
+            } else if (rs.mastery == level) {
+                out.push_back("Link can use " + rs.skill.name + " while it's equipped.");
+            }
+        }
+    }
+    if (after > before) {
+        Party_RefreshAllSkills();
+    }
+    return out;
 }
 
 Combatant Party_Effective(const PartyMember& member) {
     Combatant c = member.base;
-    // Skills are learned with levels (the basic Attack, skills[0], is always known)
+    // Battle skills: the basic Attack, then the active ones (in the order the player set) that are available
     std::vector<Skill> known;
-    for (size_t i = 0; i < c.skills.size(); i++) {
-        if (i == 0 || c.skills[i].learnLevel <= c.level) {
-            known.push_back(c.skills[i]);
+    if (!c.skills.empty()) {
+        known.push_back(c.skills[0]);
+    }
+    std::vector<PoolSkill> pool = Party_SkillPool(member);
+    for (const std::string& name : member.activeSkills) {
+        for (const PoolSkill& p : pool) {
+            if (p.skill.name == name) {
+                known.push_back(p.skill);
+                break;
+            }
         }
     }
     c.skills = known;
+    // The equipped Relic sets Link's affinities (gear resists apply on top)
+    if (c.name == "Link" && sEquippedRelic >= 0) {
+        for (const auto& [element, affinity] : RelicOf((RelicId)sEquippedRelic).affinities) {
+            c.affinity[(size_t)element] = affinity;
+        }
+    }
     ApplyGear(c, GearList(member));
     c.hp = std::clamp(member.base.hp, 0, c.maxHp);
     c.mp = std::clamp(member.base.mp, 0, c.maxMp);

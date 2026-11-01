@@ -57,6 +57,7 @@ constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
 constexpr float kDropChance = 0.35f; // per defeated enemy
 constexpr int kMaxDrops = 2;         // per battle
+constexpr int kOcarinaWins = 4; // Hollowed Husk wins before the Kokiri Ocarina turns up
 constexpr int kSkillRows = 6; // skill list rows shown at once (Saria knows more; the list scrolls)
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 110.0f; // adult eye height: any nearer and their feet drop out of the view
@@ -828,7 +829,21 @@ void QueueRewards() {
                 }
             }
         }
+        Party_RefreshSkills(m); // new skills join the active list while there's room
         Party_ClampToMax(m);
+    }
+
+    // Link's Relic gains mastery from the battle (the EXP shown)
+    {
+        std::vector<std::string> lines = Party_AddRelicMastery(shownXp);
+        for (size_t i = 0; i < lines.size(); i++) {
+            // the level line and what it brings, two to a message
+            std::string text = lines[i];
+            if (i + 1 < lines.size() && lines[i + 1].rfind("Link ", 0) == 0) {
+                text += "\n" + lines[++i];
+            }
+            sScene.queue.push_back(HeldMessage(text, 0xF8B80000u));
+        }
     }
 
     // Drops: each defeated enemy has a chance to leave an item (at most two per battle)
@@ -904,6 +919,13 @@ void QueueRewards() {
         std::string gate = BossGate_OnVictory(gPlayState);
         if (!gate.empty()) {
             sScene.queue.push_back(HeldMessage(gate, BossGate_IsOpen() ? 0x3CBCFC00u : 0xC8A0FF00u));
+        }
+        // Halfway to the gate, the Husk gives up a Relic (until the dungeon has chests of its own)
+        if (gPlayState != NULL && gPlayState->sceneNum == SCENE_DEKU_TREE && BossGate_Wins() >= kOcarinaWins &&
+            Party_GiveRelic(RelicId::KokiriOcarina)) {
+            sScene.queue.push_back(HeldMessage("Something glints among the roots...", 0xFCE0A800u));
+            sScene.queue.push_back(
+                HeldMessage("Found the Kokiri Ocarina!\nA Relic: equip it in Link's SKILLS.", 0xF8B80000u));
         }
     }
 

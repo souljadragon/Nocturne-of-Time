@@ -2,7 +2,8 @@
 // Build and run (from this folder):
 //   N=../../soh/soh/Enhancements/NocturneOfTime
 //   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Moon/Moon.cpp \
-//       $N/Save/NocturneSave.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o loot_tests
+//       $N/Save/NocturneSave.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp $N/Relics/Relics.cpp \
+//       -o loot_tests
 //   ./loot_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
@@ -492,6 +493,107 @@ static void TestLegendaryPowers() {
     (void)baba;
 }
 
+static bool InPool(const PartyMember& m, const char* name, bool* permanent = nullptr) {
+    for (const PoolSkill& p : Party_SkillPool(m)) {
+        if (p.skill.name == name) {
+            if (permanent) {
+                *permanent = p.permanent;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool InBattle(const PartyMember& m, const char* name) {
+    for (const Skill& s : Party_Effective(m).skills) {
+        if (s.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void TestRelicsAndSkills() {
+    std::printf("Relics and active skills\n");
+    Party_Reset();
+    Party_EnsureCreated(5);
+    PartyMember& link = Party_Members()[0];
+    PartyMember& saria = Party_Members()[1];
+
+    // Link starts with the Fairy Slingshot on: its first skill usable, not his for good yet
+    CHECK(Party_Relics()[(size_t)RelicId::FairySlingshot].owned);
+    CHECK(Party_EquippedRelic() == (int)RelicId::FairySlingshot);
+    bool perm = true;
+    CHECK(InPool(link, "Slingshot", &perm) && !perm);
+    CHECK(!InPool(link, "Seed Scatter"));
+    CHECK(InBattle(link, "Slingshot") && InBattle(link, "Jump Slash")); // sword skills come with levels
+    Combatant eff = Party_Effective(link);
+    CHECK(eff.AffinityTo(Element::Pierce) == Affinity::Resist && eff.AffinityTo(Element::Fire) == Affinity::Weak);
+    // Relics give no stats
+    Party_UnequipRelic();
+    Combatant bare = Party_Effective(link);
+    CHECK(bare.st == eff.st && bare.maxHp == eff.maxHp && bare.weaponPower == eff.weaponPower);
+    CHECK(bare.AffinityTo(Element::Fire) == Affinity::Normal);
+    CHECK(!InPool(link, "Slingshot") && !InBattle(link, "Slingshot")); // not mastered: gone with the Relic
+    CHECK(Party_EquipRelic(RelicId::FairySlingshot));
+    CHECK(InBattle(link, "Slingshot")); // back in the active list (it was offered before, and came back)
+
+    // Mastery 1: Slingshot is Link's for good, Seed Scatter unlocks
+    std::vector<std::string> lines = Party_AddRelicMastery(RelicOf(RelicId::FairySlingshot).thresholds[0]);
+    CHECK(!lines.empty() && lines[0] == "Fairy Slingshot reached mastery 1!");
+    CHECK(InPool(link, "Slingshot", &perm) && perm);
+    CHECK(InPool(link, "Seed Scatter", &perm) && !perm);
+    CHECK(InBattle(link, "Seed Scatter")); // joined automatically: there was room
+    Party_UnequipRelic();
+    CHECK(InBattle(link, "Slingshot") && !InBattle(link, "Seed Scatter"));
+    CHECK(!Party_EquipRelic(RelicId::DekuShield)); // not owned
+    CHECK(Party_GiveRelic(RelicId::DekuShield) && !Party_GiveRelic(RelicId::DekuShield));
+    CHECK(Party_EquipRelic(RelicId::DekuShield));
+    CHECK(InBattle(link, "Shield Bash"));
+    Combatant shield = Party_Effective(link);
+    CHECK(shield.AffinityTo(Element::Slash) == Affinity::Resist && shield.AffinityTo(Element::Pierce) == Affinity::Normal);
+    // Mastered all the way
+    Party_AddRelicMastery(100000);
+    CHECK(RelicMastery(RelicOf(RelicId::DekuShield), Party_Relics()[(size_t)RelicId::DekuShield].points) ==
+          RelicOf(RelicId::DekuShield).MaxMastery());
+    Party_UnequipRelic();
+    CHECK(InPool(link, "Shield Charge") && InPool(link, "Shield Wall"));
+    CHECK(Party_AddRelicMastery(50).empty()); // nothing equipped: nothing gained
+
+    // Eight skills at most; taking one off keeps it off; the pool keeps everything
+    saria.base.level = 20;
+    Party_RefreshSkills(saria);
+    CHECK((int)saria.activeSkills.size() == kMaxActiveSkills);
+    CHECK(Party_SkillPool(saria).size() == 10);
+    CHECK(!Party_ActivateSkill(saria, "Brittle Hex")); // full
+    std::string out = saria.activeSkills[0];
+    Party_DeactivateSkill(saria, out);
+    CHECK(Party_ActivateSkill(saria, "Brittle Hex"));
+    Party_RefreshSkills(saria);
+    CHECK(!Party_IsActive(saria, out));
+    CHECK((int)Party_Effective(saria).skills.size() == kMaxActiveSkills + 1); // + Attack
+    CHECK(InBattle(saria, "Brittle Hex"));
+
+    // Saved and loaded
+    nlohmann::json saved = Save_Write();
+    std::vector<std::string> activeBefore = saria.activeSkills;
+    auto relicsBefore = Party_Relics();
+    Save_Read(nlohmann::json::parse(saved.dump()));
+    CHECK(Party_Members().size() == 2);
+    CHECK(Party_Members()[1].activeSkills == activeBefore);
+    CHECK(Party_EquippedRelic() == -1);
+    for (size_t i = 0; i < relicsBefore.size(); i++) {
+        CHECK(Party_Relics()[i].owned == relicsBefore[i].owned && Party_Relics()[i].points == relicsBefore[i].points);
+    }
+    // A save from before Relics: Link gets his Fairy Slingshot
+    saved.erase("relics");
+    saved.erase("relic");
+    Save_Read(saved);
+    CHECK(Party_EquippedRelic() == (int)RelicId::FairySlingshot);
+    CHECK(InBattle(Party_Members()[0], "Slingshot"));
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -506,6 +608,7 @@ int main() {
     TestMoon();
     TestSave();
     TestLegendaryPowers();
+    TestRelicsAndSkills();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

@@ -108,7 +108,7 @@ void GrowTo(Combatant& c, int level) {
 } // namespace
 
 Combatant MakeLink(int level) {
-    // Hero: balanced, sword and slingshot
+    // Hero: balanced swordsman
     Combatant c;
     c.name = "Link";
     c.level = 1;
@@ -123,17 +123,11 @@ Combatant MakeLink(int level) {
         Describe(Attack(Element::Slash, 12), "A sword strike."),
         Describe(Make("Spin Attack", Element::Slash, TargetType::AllEnemies, 9, 0, 6),
                  "A whirling slash that hits every foe. Costs a little HP."),
-        Describe(Make("Slingshot", Element::Pierce, TargetType::OneEnemy, 10, 0, 0, 0.9f),
-                 "A Deku Seed shot. Pierces; good against fliers."),
-        // The Golden Goddesses' blessings (SMT's -kaja) and the light that breaks foes' blessings (Dekaja)
-        Describe(Stages("Din's Blessing", TargetType::AllAllies, 1, 0, 0, 4, 4),
-                 "Din's fire in every arm: the party's attack rises."),
-        Describe([] {
-                     Skill d = Stages("Dispelling Sun", TargetType::AllEnemies, 0, 0, 0, 5, 6);
-                     d.dispelBuffs = true;
-                     return d;
-                 }(),
-                 "A flash of the Sun's Song strips every foe of its blessings."),
+        // Sword skills come with levels; everything else Link learns from Relics (see Relics/Relics.cpp)
+        Describe(Learned(Make("Jump Slash", Element::Slash, TargetType::OneEnemy, 20, 0, 8), 5),
+                 "A leaping overhead cut on one foe. Costs some HP."),
+        Describe(Learned(Make("Great Spin", Element::Slash, TargetType::AllEnemies, 16, 0, 14), 12),
+                 "A charged spin that tears through every foe. Costs HP."),
     };
     GrowTo(c, level);
     return c;

@@ -2,7 +2,7 @@
 // Plays the boss fight thousands of times with the two party policies in GohmaPolicy.h and prints win rates.
 // Build and run (from this folder):
 //   N=../../soh/soh/Enhancements/NocturneOfTime
-//   g++ -std=c++20 -O2 GohmaSim.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp -o gohma_sim
+//   g++ -std=c++20 -O2 GohmaSim.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp $N/Relics/Relics.cpp -o gohma_sim
 //   ./gohma_sim [fromLevel toLevel]       win rates per level
 //   ./gohma_sim level smart(0/1) seed     one fight, every message
 #include "GohmaPolicy.h"

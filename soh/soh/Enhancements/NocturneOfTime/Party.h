@@ -6,6 +6,7 @@
 #include "Battle/BattleEngine.h"
 #include "Loot/Loot.h"
 #include "Items/Consumables.h"
+#include "Relics/Relics.h"
 
 #include <array>
 #include <optional>
@@ -19,7 +20,49 @@ struct PartyMember {
     int xp = 0;
     int unspentStatPoints = 0; // from level-ups, waiting for the player to place them
     std::array<std::optional<Item>, (size_t)Slot::Count> gear;
+    // Skills taken into battle (names, at most kMaxActiveSkills; the basic Attack is always there). Skills learned
+    // later join automatically while there's room; `seenSkills` remembers which ones were offered, so a skill
+    // the player took off stays off.
+    std::vector<std::string> activeSkills;
+    std::vector<std::string> seenSkills;
 };
+
+// As many skills as SMT III lets the Demi-Fiend and each demon carry
+constexpr int kMaxActiveSkills = 8;
+
+// A skill a member could take into battle
+struct PoolSkill {
+    Skill skill;
+    bool fromRelic = false; // taught by a Relic
+    bool permanent = true;  // false: only while that Relic is equipped (not mastered yet)
+};
+
+// Every skill `member` can choose from: level-learned ones and, for Link, Relic skills (mastered ones for good,
+// the equipped Relic's unlocked ones for now). Excludes the basic Attack.
+std::vector<PoolSkill> Party_SkillPool(const PartyMember& member);
+// Add newly available skills to the active list while there's room, and drop ones no longer available.
+void Party_RefreshSkills(PartyMember& member);
+void Party_RefreshAllSkills();
+// Take a pool skill into battle (false if the list is full or it isn't available) / leave it out.
+bool Party_ActivateSkill(PartyMember& member, const std::string& name);
+void Party_DeactivateSkill(PartyMember& member, const std::string& name);
+bool Party_IsActive(const PartyMember& member, const std::string& name);
+
+// ---- Relics (Link's) ----
+struct RelicState {
+    bool owned = false;
+    int points = 0; // mastery points
+};
+std::array<RelicState, (size_t)RelicId::Count>& Party_Relics();
+// The Relic Link has equipped (-1: none)
+int Party_EquippedRelic();
+// Give Link a Relic (true if it's new). The first Relic he gets is equipped.
+bool Party_GiveRelic(RelicId id);
+bool Party_EquipRelic(RelicId id); // false if not owned
+void Party_UnequipRelic();
+// A battle was won: the equipped Relic gains `points` of mastery. Returns what happened, for the battle to show
+// ("Fairy Slingshot mastery 2!", "Link can use Seed Scatter while it's equipped.", "Link learned Slingshot!").
+std::vector<std::string> Party_AddRelicMastery(int points);
 
 std::vector<PartyMember>& Party_Members();
 std::vector<Item>& Party_Bag();

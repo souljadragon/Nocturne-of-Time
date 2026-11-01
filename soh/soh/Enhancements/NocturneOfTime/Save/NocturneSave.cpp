@@ -61,7 +61,8 @@ json MemberToJson(const PartyMember& m) {
     return { { "name", c.name },   { "level", c.level }, { "maxHp", c.maxHp }, { "hp", c.hp },
              { "maxMp", c.maxMp }, { "mp", c.mp },       { "st", c.st },       { "ma", c.ma },
              { "vi", c.vi },       { "ag", c.ag },       { "lu", c.lu },       { "ailment", (int)c.ailment },
-             { "xp", m.xp },       { "points", m.unspentStatPoints },          { "gear", gear } };
+             { "xp", m.xp },       { "points", m.unspentStatPoints },          { "gear", gear },
+             { "active", m.activeSkills }, { "seen", m.seenSkills } };
 }
 
 bool MemberFromJson(const json& j, PartyMember& m) {
@@ -85,6 +86,18 @@ bool MemberFromJson(const json& j, PartyMember& m) {
     c.ailmentTurns = 0;
     m.xp = std::max(0, j.value("xp", 0));
     m.unspentStatPoints = std::max(0, j.value("points", 0));
+    auto names = [&](const char* key, std::vector<std::string>& out) {
+        out.clear();
+        if (j.contains(key) && j[key].is_array()) {
+            for (const json& n : j[key]) {
+                if (n.is_string()) {
+                    out.push_back(n.get<std::string>());
+                }
+            }
+        }
+    };
+    names("active", m.activeSkills);
+    names("seen", m.seenSkills);
     if (j.contains("gear") && j["gear"].is_array()) {
         for (size_t i = 0; i < m.gear.size() && i < j["gear"].size(); i++) {
             const json& g = j["gear"][i];
@@ -114,7 +127,15 @@ json Save_Write() {
              { "bag", bag },
              { "consumables", consumables },
              { "moon", { { "cycle", Moon_CyclePos() }, { "steps", Moon_StepsInPhase() } } },
-             { "nextUid", Loot_NextUid() } };
+             { "nextUid", Loot_NextUid() },
+             { "relics", [] {
+                  json r = json::array();
+                  for (const RelicState& st : Party_Relics()) {
+                      r.push_back({ { "owned", st.owned }, { "points", st.points } });
+                  }
+                  return r;
+              }() },
+             { "relic", Party_EquippedRelic() } };
 }
 
 void Save_Read(const json& data) {
@@ -161,6 +182,29 @@ void Save_Read(const json& data) {
         Moon_SetState(data["moon"].value("cycle", 0), data["moon"].value("steps", 0));
     }
     Loot_SetNextUid(std::max<uint32_t>(data.value("nextUid", 1u), maxUid + 1));
+    // Relics (saves from before them: Link gets his Fairy Slingshot)
+    if (data.contains("relics") && data["relics"].is_array()) {
+        auto& relics = Party_Relics();
+        for (size_t i = 0; i < relics.size() && i < data["relics"].size(); i++) {
+            const json& r = data["relics"][i];
+            if (r.is_object()) {
+                relics[i].owned = r.value("owned", false);
+                relics[i].points = std::max(0, r.value("points", 0));
+            }
+        }
+        int equipped = data.value("relic", -1);
+        if (equipped >= 0 && equipped < (int)RelicId::Count && relics[equipped].owned) {
+            Party_EquipRelic((RelicId)equipped);
+        }
+    }
+    bool anyRelic = false;
+    for (const RelicState& st : Party_Relics()) {
+        anyRelic = anyRelic || st.owned;
+    }
+    if (!anyRelic) {
+        Party_GiveRelic(RelicId::FairySlingshot);
+    }
+    Party_RefreshAllSkills();
     for (PartyMember& m : members) {
         Party_ClampToMax(m);
     }
