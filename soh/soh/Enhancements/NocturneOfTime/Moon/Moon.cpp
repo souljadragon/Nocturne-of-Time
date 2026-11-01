@@ -71,7 +71,7 @@ void Moon_Reset() {
 }
 
 float Moon_EncounterScale() {
-    // About 15 steps between battles at New Moon, 9 at Half Moon, 4-5 at Full Moon
+    // About 28 steps between battles at New Moon, 13 at Half Moon, 8 at Full Moon (with BattleScene's meter)
     return 0.6f + 1.4f * Moon_Fullness();
 }
 

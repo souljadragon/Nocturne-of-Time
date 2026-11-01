@@ -641,7 +641,10 @@ extern "C" int Husk_HidesRooms(void) {
 }
 
 bool Husk_Active(PlayState* play) {
-    return play != NULL && ModOn() && play->sceneNum == SCENE_DEKU_TREE;
+    // Off by default since the Nov 1 playtest (too cramped, not OoT enough): the Deku Tree is crawled as itself.
+    // Kept behind a cvar while the "morph the real tree onto the grid" approach is worked out.
+    return play != NULL && ModOn() && CVarGetInteger(CVAR_ENHANCEMENT("Nocturne.HuskFloors"), 0) != 0 &&
+           play->sceneNum == SCENE_DEKU_TREE;
 }
 
 int Husk_Floor() {
@@ -652,11 +655,7 @@ bool Husk_Frame(PlayState* play, Player* player) {
     if (sMsgTimer > 0 && --sMsgTimer == 0) {
         sMsg.clear();
     }
-    // A battle puts the stick out
-    if (Battle_IsActive() && sStick > 0) {
-        sStick = 0;
-        sStickOutInBattle = true;
-    }
+    // (A battle no longer puts the stick out: it made burning webs impossible with encounters about)
     if (!Battle_IsActive() && sStickOutInBattle) {
         sStickOutInBattle = false;
         Say("Your stick went out in the fight.", 0xF8380000u);

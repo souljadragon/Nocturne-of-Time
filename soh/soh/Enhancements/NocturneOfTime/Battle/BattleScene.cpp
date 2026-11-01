@@ -47,8 +47,8 @@ namespace {
 
 // ---- Tuning ---------------------------------------------------------------------------------------------
 constexpr int kDangerTrigger = 100;   // meter value that starts a battle
-constexpr int kDangerStepMin = 6;     // meter gained per step: min..max
-constexpr int kDangerStepMax = 16;
+constexpr int kDangerStepMin = 3;     // meter gained per step: min..max (about 28 steps between battles at
+constexpr int kDangerStepMax = 9;     // New Moon, 13 at Half Moon, 8 at Full Moon)
 constexpr int kDangerYellow = 35;     // gem turns yellow
 constexpr int kDangerRed = 70;        // gem turns red
 constexpr int kMessageFrames = 24;    // how long a battle message stays up (20 game frames = 1 second)
