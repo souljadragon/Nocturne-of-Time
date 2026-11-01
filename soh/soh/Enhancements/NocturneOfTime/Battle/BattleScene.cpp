@@ -947,6 +947,13 @@ void QueueRewards() {
         if (!gate.empty()) {
             sScene.queue.push_back(HeldMessage(gate, BossGate_IsOpen() ? 0x3CBCFC00u : 0xC8A0FF00u));
         }
+        // In the real tree (no grid floors), the Kokiri Ocarina turns up halfway to the gate
+        if (gPlayState != NULL && gPlayState->sceneNum == SCENE_DEKU_TREE && !Husk_Active(gPlayState) &&
+            BossGate_Wins() >= 4 && Party_GiveRelic(RelicId::KokiriOcarina)) {
+            sScene.queue.push_back(HeldMessage("Something glints among the roots...", 0xFCE0A800u));
+            sScene.queue.push_back(
+                HeldMessage("Found the Kokiri Ocarina!\nA Relic: equip it in Link's SKILLS.", 0xF8B80000u));
+        }
     }
 
     // Keep the engine's copy in step so EndBattle doesn't undo the level-up HP
