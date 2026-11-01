@@ -836,13 +836,8 @@ void QueueRewards() {
     // Link's Relic gains mastery from the battle (the EXP shown)
     {
         std::vector<std::string> lines = Party_AddRelicMastery(shownXp);
-        for (size_t i = 0; i < lines.size(); i++) {
-            // the level line and what it brings, two to a message
-            std::string text = lines[i];
-            if (i + 1 < lines.size() && lines[i + 1].rfind("Link ", 0) == 0) {
-                text += "\n" + lines[++i];
-            }
-            sScene.queue.push_back(HeldMessage(text, 0xF8B80000u));
+        for (const std::string& line : lines) {
+            sScene.queue.push_back(HeldMessage(line, 0xF8B80000u));
         }
     }
 

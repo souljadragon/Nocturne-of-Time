@@ -60,8 +60,8 @@ int Party_EquippedRelic();
 bool Party_GiveRelic(RelicId id);
 bool Party_EquipRelic(RelicId id); // false if not owned
 void Party_UnequipRelic();
-// A battle was won: the equipped Relic gains `points` of mastery. Returns what happened, for the battle to show
-// ("Fairy Slingshot mastery 2!", "Link can use Seed Scatter while it's equipped.", "Link learned Slingshot!").
+// A battle was won: the equipped Relic gains `points` of mastery. Returns a line per mastery level reached, for
+// the battle to show ("Fairy Slingshot reached Mastery level 1! Slingshot is now learned.").
 std::vector<std::string> Party_AddRelicMastery(int points);
 
 std::vector<PartyMember>& Party_Members();

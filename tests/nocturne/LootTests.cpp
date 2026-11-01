@@ -541,7 +541,7 @@ static void TestRelicsAndSkills() {
 
     // Mastery 1: Slingshot is Link's for good, Seed Scatter unlocks
     std::vector<std::string> lines = Party_AddRelicMastery(RelicOf(RelicId::FairySlingshot).thresholds[0]);
-    CHECK(!lines.empty() && lines[0] == "Fairy Slingshot reached mastery 1!");
+    CHECK(!lines.empty() && lines[0] == "Fairy Slingshot reached Mastery 1!\nSlingshot is now learned.");
     CHECK(InPool(link, "Slingshot", &perm) && perm);
     CHECK(InPool(link, "Seed Scatter", &perm) && !perm);
     CHECK(InBattle(link, "Seed Scatter")); // joined automatically: there was room

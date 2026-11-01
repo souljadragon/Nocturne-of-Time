@@ -252,16 +252,22 @@ std::vector<std::string> Party_AddRelicMastery(int points) {
     int before = RelicMastery(def, st.points);
     st.points += points;
     int after = RelicMastery(def, st.points);
+    // One line per level: "Fairy Slingshot reached Mastery level 1! Slingshot is now learned."
     for (int level = before + 1; level <= after; level++) {
-        out.push_back(level >= def.MaxMastery() ? def.name + " is mastered!"
-                                                 : def.name + " reached mastery " + std::to_string(level) + "!");
+        // (two lines of the battle's message window, 35 characters each)
+        std::string line = def.name + " reached Mastery level " + std::to_string(level) + "!";
+        if (line.size() > 35) {
+            line = def.name + " reached Mastery " + std::to_string(level) + "!";
+        }
+        if (level >= def.MaxMastery()) {
+            line = def.name + " is mastered!";
+        }
         for (const RelicSkill& rs : def.skills) {
             if (rs.mastery == level - 1) {
-                out.push_back("Link learned " + rs.skill.name + " for good!");
-            } else if (rs.mastery == level) {
-                out.push_back("Link can use " + rs.skill.name + " while it's equipped.");
+                line += "\n" + rs.skill.name + " is now learned.";
             }
         }
+        out.push_back(line);
     }
     if (after > before) {
         Party_RefreshAllSkills();
