@@ -19,6 +19,7 @@
 #include "../Moon/MoonHud.h"
 #include "../Moon/Moon.h"
 #include "../Dungeon/HuskDungeon.h"
+#include "../Dungeon/FieldFire.h"
 #include "../Boss/BossGate.h"
 
 #include <algorithm>
@@ -143,10 +144,11 @@ static void DrawFieldHud(PlayState* play) {
     const int mapSize = 62;
     Automap_Draw(play, view.x + view.w - mapSize - 2, view.y + 2, mapSize);
     // A burning Deku Stick: its steps left in the map's bottom-left corner
-    if (Husk_Active(play) && Husk_StickSteps() > 0 && !Automap_IsLarge()) {
+    int stick = Husk_Active(play) ? Husk_StickSteps() : FieldFire_StickSteps();
+    if (stick > 0 && !Automap_IsLarge()) {
         OPEN_DISPS(play->state.gfxCtx);
         Painter sp(&OVERLAY_DISP);
-        sp.Text(view.x + view.w - mapSize + 2, view.y + mapSize - 10, "✻" + std::to_string(Husk_StickSteps()), Orange);
+        sp.Text(view.x + view.w - mapSize + 2, view.y + mapSize - 10, "✻" + std::to_string(stick), Orange);
         CLOSE_DISPS(play->state.gfxCtx);
     }
 
@@ -158,8 +160,9 @@ static void DrawFieldHud(PlayState* play) {
     p.Text(14, kMessageY + 6, "▶", Green);
     // The boss gate's prompt takes the window while it's up
     if (!BossGate_DrawPrompt(p, 26, kMessageY + 6, SCREEN_WIDTH - 14 - 26)) {
-        if (const char* husk = Husk_Active(play) ? Husk_Message() : nullptr) {
-            uint32_t c = Husk_MessageColor();
+        const char* husk = Husk_Active(play) ? Husk_Message() : FieldFire_Message();
+        if (husk != nullptr) {
+            uint32_t c = Husk_Active(play) ? Husk_MessageColor() : FieldFire_MessageColor();
             Color mc = { (u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), 255 };
             std::vector<std::string> lines = Wrap(husk, (size_t)(SCREEN_WIDTH - 14 - 26) / kCharW);
             for (size_t i = 0; i < lines.size() && i < 2; i++) {

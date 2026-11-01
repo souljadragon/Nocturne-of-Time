@@ -12,6 +12,7 @@
 //   A, B, items     unchanged (open doors, talk, swing sword...)
 
 #include "Dungeon/HuskDungeon.h"
+#include "Dungeon/FieldFire.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -70,7 +71,7 @@ constexpr u32 kAirborneFlags1 = PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL;
 
 // Assist: for a few frames the game itself walks Link forward, so vanilla behaviour that needs real
 // movement can start (grabbing vines/ladders, climbing down from a ladder top, walking off a ledge).
-enum class Action { None, Step, Turn, Bump, Assist };
+enum class Action { None, Step, Turn, Bump, Assist, Climb };
 
 struct CrawlerState {
     bool active = false; // the crawler owns Link and the camera this frame
@@ -90,6 +91,9 @@ struct CrawlerState {
     f32 bumpAmount = 0.0f;
     bool needCentre = false; // line the grid up with the corridor once he's on the ground (AlignToCorridor)
     s16 gridYaw = 0;         // the grid's rotation: 0 everywhere except where the level isn't axis-aligned
+    s8 lastRoom = -1;        // the room the grid was last lined up for
+    Vec3f climbFrom = { 0.0f, 0.0f, 0.0f }; // a climb (or a drop): from here up/down, then onto `to`
+    f32 climbRise = 0.0f;
 };
 
 CrawlerState sCrawler;
@@ -208,6 +212,58 @@ void StartAssist() {
     sCrawler.timer = 0;
 }
 
+constexpr s16 kClimbFrames = 18;
+
+// Climbing as a grid move: the top of the vines or ladder in front, onto the floor just past its edge. Returns
+// false if no top is found (then the wall is just a wall).
+bool FindClimbTop(PlayState* play, const Vec3f& from, const Vec3f& dir, f32 wallDist, Vec3f& top) {
+    for (f32 h = 40.0f; h < 1200.0f; h += 20.0f) {
+        Vec3f a = { from.x, from.y + h, from.z };
+        Vec3f b = { from.x + dir.x * (wallDist + 30.0f), from.y + h, from.z + dir.z * (wallDist + 30.0f) };
+        Vec3f hit;
+        CollisionPoly* poly;
+        s32 bgId;
+        if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)) {
+            continue; // still wall here
+        }
+        // Clear above the wall: the ledge's floor, a little past the edge
+        Vec3f probe = { from.x + dir.x * (wallDist + 45.0f), from.y + h + 40.0f, from.z + dir.z * (wallDist + 45.0f) };
+        f32 floorY = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+        if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY < from.y + 30.0f) {
+            return false;
+        }
+        top = { probe.x, floorY, probe.z };
+        return true;
+    }
+    return false;
+}
+
+void StartClimb(Player* player, const Vec3f& to) {
+    sCrawler.action = Action::Climb;
+    sCrawler.timer = 0;
+    sCrawler.climbFrom = player->actor.world.pos;
+    sCrawler.to = to;
+    sCrawler.climbRise = to.y - player->actor.world.pos.y;
+    Player_PlaySfx(&player->actor, sCrawler.climbRise > 0 ? NA_SE_PL_CLIMB_CLIFF : NA_SE_PL_LAND);
+}
+
+// The Deku Tree's rooms as OoT built them: most run along the world axes, a few at 45 degrees. The grid turns to
+// match the room Link is in (and he's centred in its passages), so steps run straight down its corridors.
+s16 RoomGridYaw(PlayState* play, s8 room, bool& known) {
+    known = false;
+    if (play->sceneNum == SCENE_DEKU_TREE) {
+        static const s8 k45[] = { 1, 2, 8 };
+        known = true;
+        for (s8 r : k45) {
+            if (r == room) {
+                return 0x2000;
+            }
+        }
+        return 0;
+    }
+    return 0;
+}
+
 void StartStep(PlayState* play, Player* player, s8 dirFacing) {
     bool forward = ((dirFacing - sCrawler.facing) & 3) == 0;
     s16 gridYaw = FacingToYaw(sCrawler.facing);
@@ -230,9 +286,15 @@ void StartStep(PlayState* play, Player* player, s8 dirFacing) {
     if (wall.hit) {
         u32 wallFlags = SurfaceType_GetWallFlags(&play->colCtx, wall.poly, wall.bgId);
 
-        // Vines and ladders: let the game walk Link into them so he grabs on
+        // Vines and ladders: up to the top in one move (as a crawler climbs stairs); the game's own climbing if no
+        // top can be found
         if (forward && (wallFlags & (WALL_FLAG_CLIMBABLE | WALL_FLAG_LADDER))) {
-            StartAssist();
+            Vec3f top;
+            if (FindClimbTop(play, from, dir, wall.dist, top)) {
+                StartClimb(player, top);
+            } else {
+                StartAssist();
+            }
             return;
         }
 
@@ -265,8 +327,19 @@ void StartStep(PlayState* play, Player* player, s8 dirFacing) {
         return;
     }
     if (forward && floorY < from.y - kDropAssist) {
-        // A real drop: let the game walk Link off so ladder tops and ledge jumps behave normally
-        StartAssist();
+        // A real drop. Onto a web the game's own fall is needed (a long fall breaks it); anywhere else Link
+        // climbs down to the floor below in one move
+        CollisionPoly* poly;
+        s32 bgId;
+        Vec3f probe = { to.x, from.y + 5.0f, to.z };
+        f32 below = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
+        DynaPolyActor* onto = bgId != BGCHECK_SCENE ? DynaPoly_GetActor(&play->colCtx, bgId) : NULL;
+        bool water = player->actor.yDistToWater > 0.0f;
+        if (below <= BGCHECK_Y_MIN + 1.0f || (onto != NULL && onto->actor.id == ACTOR_BG_YDAN_SP) || water) {
+            StartAssist();
+        } else {
+            StartClimb(player, { to.x, below, to.z });
+        }
         return;
     }
 
@@ -288,6 +361,7 @@ void UpdateAction(Player* player) {
             s16 yawDiff = (s16)(sCrawler.stepYawTo - sCrawler.stepYawFrom);
             sCrawler.curYaw = (s16)(sCrawler.stepYawFrom + (s16)(yawDiff * t));
             if (sCrawler.timer >= kStepFrames) {
+                FieldFire_OnStep();
                 sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
                 sCrawler.action = Action::None;
@@ -312,6 +386,7 @@ void UpdateAction(Player* player) {
             bool airborne = !(player->actor.bgCheckFlags & BGCHECKFLAG_GROUND);
             if (airborne || sCrawler.timer >= kAssistFrames) {
                 StartTurn(FacingToYaw(sCrawler.facing));
+                sCrawler.needCentre = true; // wherever he lands, line the grid up there
             }
             break;
         }
@@ -324,6 +399,29 @@ void UpdateAction(Player* player) {
             if (sCrawler.timer >= kTurnFrames) {
                 sCrawler.curYaw = sCrawler.yawTo;
                 sCrawler.action = Action::None;
+            }
+            break;
+        }
+
+        case Action::Climb: {
+            // Up (or down) the wall first, then over the edge
+            sCrawler.timer++;
+            f32 t = CLAMP_MAX((f32)sCrawler.timer / kClimbFrames, 1.0f);
+            f32 rise = SmoothStep(CLAMP_MAX(t / 0.7f, 1.0f));
+            f32 over = SmoothStep(CLAMP((t - 0.5f) / 0.5f, 0.0f, 1.0f));
+            if (sCrawler.climbRise < 0.0f) { // going down: over the edge first, then down
+                over = SmoothStep(CLAMP_MAX(t / 0.4f, 1.0f));
+                rise = SmoothStep(CLAMP((t - 0.3f) / 0.7f, 0.0f, 1.0f));
+            }
+            player->actor.world.pos.x = sCrawler.climbFrom.x + (sCrawler.to.x - sCrawler.climbFrom.x) * over;
+            player->actor.world.pos.z = sCrawler.climbFrom.z + (sCrawler.to.z - sCrawler.climbFrom.z) * over;
+            player->actor.world.pos.y = sCrawler.climbFrom.y + sCrawler.climbRise * rise;
+            player->actor.velocity.y = 0.0f;
+            if (sCrawler.timer >= kClimbFrames) {
+                player->actor.world.pos = sCrawler.to;
+                sCrawler.action = Action::None;
+                sCrawler.needCentre = true; // a new level: line the grid up again
+                Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
             }
             break;
         }
@@ -353,7 +451,9 @@ void Activate(Player* player) {
     sCrawler.facing = YawToFacing(player->actor.shape.rot.y);
     sCrawler.curYaw = player->actor.shape.rot.y;
     // Gohma's lair isn't laid out on the 80-unit grid: line the grid up with its corridors instead
-    sCrawler.needCentre = gPlayState != NULL && gPlayState->sceneNum == SCENE_DEKU_TREE_BOSS;
+    sCrawler.needCentre = gPlayState != NULL && (gPlayState->sceneNum == SCENE_DEKU_TREE_BOSS ||
+                                                 gPlayState->sceneNum == SCENE_DEKU_TREE);
+    sCrawler.lastRoom = -1;
     // Ease from wherever Link was facing onto the grid
     StartTurn(FacingToYaw(sCrawler.facing));
     player->actor.shape.shadowDraw = NULL;
@@ -374,14 +474,34 @@ void AlignToCorridor(PlayState* play, Player* player) {
             found = true;
         }
     }
-    if (!found) {
+    bool known = false;
+    s16 roomYaw = RoomGridYaw(play, play->roomCtx.curRoom.num, known);
+    sCrawler.lastRoom = play->roomCtx.curRoom.num;
+    if (known && roomYaw == 0) {
+        // An axis-aligned room: the automap's own tiles (so the map and the steps agree)
+        sCrawler.gridYaw = 0;
+        sCrawler.gridOrigin = { 0.0f, 0.0f, 0.0f };
+        Vec3f snapped = SnapToGrid(pos);
+        player->actor.world.pos.x = snapped.x;
+        player->actor.world.pos.z = snapped.z;
+        sCrawler.facing = YawToFacing(sCrawler.curYaw);
+        sCrawler.curYaw = FacingToYaw(sCrawler.facing);
+        sCrawler.action = Action::None;
+        player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = sCrawler.curYaw;
         return;
     }
-    f32 nx = COLPOLY_GET_NORMAL(nearest.poly->normal.x), nz = COLPOLY_GET_NORMAL(nearest.poly->normal.z);
-    if (nx * nx + nz * nz < 0.5f) {
+    if (!found && !known) {
+        return;
+    }
+    f32 nx = 0.0f, nz = 1.0f;
+    if (found) {
+        nx = COLPOLY_GET_NORMAL(nearest.poly->normal.x);
+        nz = COLPOLY_GET_NORMAL(nearest.poly->normal.z);
+    }
+    if (!known && nx * nx + nz * nz < 0.5f) {
         return; // not an upright wall
     }
-    s16 normalYaw = Math_Atan2S(nz, nx);
+    s16 normalYaw = known ? roomYaw : Math_Atan2S(nz, nx);
     s32 g = normalYaw;
     while (g > 0x2000) {
         g -= 0x4000;
@@ -407,7 +527,7 @@ void AlignToCorridor(PlayState* play, Player* player) {
     sCrawler.gridOrigin = { pos.x, 0.0f, pos.z };
     // Straight onto the corridor's line in one go (this happens as the view switches to first person, so a
     // cut reads better than a turn followed by a second adjustment)
-    sCrawler.facing = YawToFacing(player->actor.shape.rot.y);
+    sCrawler.facing = YawToFacing(sCrawler.curYaw);
     sCrawler.curYaw = FacingToYaw(sCrawler.facing);
     sCrawler.action = Action::None;
     player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = sCrawler.curYaw;
@@ -450,6 +570,23 @@ bool OnFilterInput(Player* player, Input* input) {
 
     BossGate_Tick(play, player);
 
+    FieldFire_Tick(play);
+    // A climb moves Link itself: his own update (gravity) stays off until he's up
+    if (sCrawler.action == Action::Climb) {
+        UpdateAction(player);
+        ClearMovementInput(input);
+        for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
+            pad->button &= ~(BTN_A | BTN_B | BTN_CLEFT | BTN_CDOWN | BTN_CRIGHT | BTN_CUP);
+        }
+        player->actor.shape.rot.y = player->actor.world.rot.y = player->yaw = sCrawler.curYaw;
+        return false;
+    }
+    // Into another room: line the grid up with it
+    if (play->sceneNum == SCENE_DEKU_TREE && sCrawler.action == Action::None &&
+        play->roomCtx.curRoom.num != sCrawler.lastRoom && !Husk_Active(play)) {
+        sCrawler.needCentre = true;
+    }
+
     // The Husk puts Link on its floors (and keeps him there while the floor settles)
     if (Husk_Active(play) && Husk_Frame(play, player)) {
         ClearMovementInput(input);
@@ -489,6 +626,14 @@ bool OnFilterInput(Player* player, Input* input) {
         player->actor.world.rot.y = sCrawler.curYaw;
         player->actor.shape.rot.y = sCrawler.curYaw;
         return false; // Link stays frozen: no idle animation, fidgets or their sounds
+    }
+
+    // A at the real tree's torches and webs: Deku Stick fire
+    if (!Husk_Active(play) && (input->press.button & BTN_A) && sCrawler.action == Action::None &&
+        FieldFire_OnA(play, player, sCrawler.curYaw)) {
+        for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
+            pad->button &= ~BTN_A;
+        }
     }
 
     // A in the Husk: torches, webs, stones, the ways up and down (and never Link's own A actions)
@@ -620,6 +765,19 @@ void RegisterDungeonCrawler() {
             va_arg(args, s32); // limbIndex
             Gfx** dList = va_arg(args, Gfx**);
             *dList = NULL;
+        }
+    });
+
+    // The real dungeons' enemies are random encounters now: no vanilla enemies roam them. (The Deku Scrubs of the
+    // boss door's riddle and Gold Skulltulas stay.)
+    COND_HOOK(ShouldActorInit, enabled, [](void* actorRef, bool* result) {
+        Actor* actor = (Actor*)actorRef;
+        if (gPlayState == NULL || gPlayState->sceneNum != SCENE_DEKU_TREE || actor->category != ACTORCAT_ENEMY) {
+            return;
+        }
+        bool goldSkulltula = actor->id == ACTOR_EN_SW && (actor->params & 0xE000) != 0;
+        if (actor->id != ACTOR_EN_HINTNUTS && !goldSkulltula) {
+            *result = false;
         }
     });
 
