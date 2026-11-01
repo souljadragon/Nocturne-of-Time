@@ -48,6 +48,9 @@ std::array<ConsumableDef, (size_t)ConsumableId::Count> MakeAll() {
     all[(size_t)ConsumableId::BottledFairy] = { ConsumableId::BottledFairy, "Bottled Fairy",
                                                 "A fairy in a bottle. Revives a fallen ally with half their HP.",
                                                 fairy, true, 5 };
+    all[(size_t)ConsumableId::DekuStick] = { ConsumableId::DekuStick, "Deku Stick",
+                                             "A dry Deku branch. Light it at a torch: it burns for 12 steps.",
+                                             ItemEffect{}, false, 0, true };
     return all;
 }
 

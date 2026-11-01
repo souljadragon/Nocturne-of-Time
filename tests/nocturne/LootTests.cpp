@@ -311,7 +311,8 @@ static void TestConsumables() {
     for (int i = 0; i < 20000; i++) {
         seen[RollConsumable(rng)]++;
     }
-    CHECK((int)seen.size() == (int)ConsumableId::Count);
+    CHECK((int)seen.size() == (int)ConsumableId::Count - 1); // every kind but Deku Sticks (chests only)
+    CHECK(seen.count(ConsumableId::DekuStick) == 0);
     CHECK(seen[ConsumableId::RedPotion] > seen[ConsumableId::HylianHerb]);
     CHECK(seen[ConsumableId::BluePotion] < 20000 * 0.05);
     for (size_t i = 0; i < (size_t)ConsumableId::Count; i++) {

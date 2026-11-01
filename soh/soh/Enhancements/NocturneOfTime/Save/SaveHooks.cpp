@@ -7,6 +7,7 @@
 // OnLoadGame everything is reset and then the remembered section applied. A save without the section (a new
 // file, or one from before saving existed) simply starts fresh.
 
+#include "../Dungeon/HuskDungeon.h"
 #include "soh/SaveManager.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
@@ -48,6 +49,7 @@ void SaveSection(const SaveContext&, int, bool) {
     data["bestiary"] = bestiary;
     data["maps"] = Automap_Save();
     data["gate"] = BossGate_Save();
+    data["husk"] = Husk_Save();
     SaveManager::Instance->SaveData("data", data);
 }
 
@@ -56,6 +58,7 @@ void ApplyLoad() {
     Battle_ResetForLoad();
     Automap_Reset();
     BossGate_Reset();
+    Husk_Reset();
     MoonHud_ResetNotice();
     Party_Reset();
     Moon_Reset();
@@ -76,6 +79,9 @@ void ApplyLoad() {
     }
     if (data.contains("gate")) {
         BossGate_Load(data["gate"]);
+    }
+    if (data.contains("husk")) {
+        Husk_Load(data["husk"]);
     }
     sPending.reset();
 }

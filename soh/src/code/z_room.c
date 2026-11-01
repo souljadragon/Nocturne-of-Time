@@ -1,4 +1,5 @@
 #ifdef WIN32
+#include "soh/Enhancements/NocturneOfTime/Dungeon/HuskDungeon.h"
 #include <vcruntime_string.h>
 #endif
 
@@ -632,6 +633,10 @@ s32 func_800973FC(PlayState* play, RoomContext* roomCtx) {
 }
 
 void Room_Draw(PlayState* play, Room* room, u32 flags) {
+    // Nocturne of Time: the Hollowed Husk draws its own grid floors instead of the Deku Tree's rooms
+    if (Husk_HidesRooms()) {
+        return;
+    }
     if (room->segment != NULL) {
         gSegments[3] = VIRTUAL_TO_PHYSICAL(room->segment);
         assert(room->meshHeader->base.type < ARRAY_COUNTU(sRoomDrawHandlers));

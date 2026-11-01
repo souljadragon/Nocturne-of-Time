@@ -20,6 +20,7 @@
 #include "../DungeonCrawler.h"
 #include "../Boss/BossGate.h"
 #include "../Audio/NocturneMusic.h"
+#include "../Dungeon/HuskDungeon.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -57,7 +58,6 @@ constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
 constexpr float kDropChance = 0.35f; // per defeated enemy
 constexpr int kMaxDrops = 2;         // per battle
-constexpr int kOcarinaWins = 4; // Hollowed Husk wins before the Kokiri Ocarina turns up
 constexpr int kSkillRows = 6; // skill list rows shown at once (Saria knows more; the list scrolls)
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 110.0f; // adult eye height: any nearer and their feet drop out of the view
@@ -651,6 +651,27 @@ void StartRandomBattle(PlayState* play, Player* player) {
     NocturneMusic_StartBattle(play);
 }
 
+// A fixed fight (an egg sac, the elite): exactly these enemy kinds
+void StartFixedBattle(PlayState* play, Player* player, const std::vector<int>& kinds) {
+    std::vector<Combatant> enemies;
+    for (int k : kinds) {
+        enemies.push_back(MakeEnemy((EnemyKind)k));
+    }
+    StartBattle(play, player, enemies, false);
+    NocturneMusic_StartBattle(play);
+}
+
+// A tripwire: a random encounter with one foe more
+void StartTripwireBattle(PlayState* play, Player* player) {
+    std::vector<Combatant> enemies;
+    for (EnemyKind k : RollEncounter()) {
+        enemies.push_back(MakeEnemy(k));
+    }
+    enemies.push_back(MakeEnemy(RollEncounter().front()));
+    StartBattle(play, player, enemies, false);
+    NocturneMusic_StartBattle(play);
+}
+
 void StartBossBattle(PlayState* play, Player* player) {
     // Two larvae, three under a gibbous or full moon
     int larvae = Moon_Phase() >= MoonPhase::SixEighths ? 3 : 2;
@@ -725,6 +746,10 @@ void KillEnemyActors() {
 }
 
 void EndBattle() {
+    bool won = sScene.battle && sScene.battle->Phase() == BattlePhase::Victory;
+    if (!sScene.boss) {
+        Husk_OnBattleEnd(won); // egg sacs and the elite
+    }
     if (sScene.defeat) {
         // A game over reloads the dungeon without reloading the save: start the party fresh
         sScene.battle.reset();
@@ -921,13 +946,6 @@ void QueueRewards() {
         std::string gate = BossGate_OnVictory(gPlayState);
         if (!gate.empty()) {
             sScene.queue.push_back(HeldMessage(gate, BossGate_IsOpen() ? 0x3CBCFC00u : 0xC8A0FF00u));
-        }
-        // Halfway to the gate, the Husk gives up a Relic (until the dungeon has chests of its own)
-        if (gPlayState != NULL && gPlayState->sceneNum == SCENE_DEKU_TREE && BossGate_Wins() >= kOcarinaWins &&
-            Party_GiveRelic(RelicId::KokiriOcarina)) {
-            sScene.queue.push_back(HeldMessage("Something glints among the roots...", 0xFCE0A800u));
-            sScene.queue.push_back(
-                HeldMessage("Found the Kokiri Ocarina!\nA Relic: equip it in Link's SKILLS.", 0xF8B80000u));
         }
     }
 
@@ -1161,7 +1179,7 @@ std::vector<ConsumableId> OwnedItems() {
     std::vector<ConsumableId> owned;
     const auto& counts = Party_Consumables();
     for (size_t i = 0; i < counts.size(); i++) {
-        if (counts[i] > 0) {
+        if (counts[i] > 0 && !ConsumableOf((ConsumableId)i).fieldTool) {
             owned.push_back((ConsumableId)i);
         }
     }
@@ -1646,6 +1664,7 @@ void Battle_Update(PlayState* play, Player*, void* inputPtr) {
                 // Win or lose, the boss fight ends with a warp back up to the dungeon entrance (losing is no game
                 // over: the party is patched up there and can take the gate again)
                 sBossDone = true;
+                Husk_OnBossResult(!sScene.defeat);
                 EndBattle();
                 BossGate_ReturnToDungeon(play);
                 break;
@@ -2057,3 +2076,11 @@ void Battle_DrawUi(PlayState* play) {
 }
 
 static RegisterShipInitFunc initFunc(RegisterBattleScene, { CVAR_CRAWLER_NAME });
+
+void Battle_StartFixed(PlayState* play, Player* player, const std::vector<int>& kinds) {
+    StartFixedBattle(play, player, kinds);
+}
+
+void Battle_StartTripwire(PlayState* play, Player* player) {
+    StartTripwireBattle(play, player);
+}

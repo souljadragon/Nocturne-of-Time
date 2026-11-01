@@ -49,4 +49,6 @@ bool BossGate_Position(PlayState* play, float& x, float& y, float& z);
 // ---- Warps ----
 bool BossGate_InBossRoom(PlayState* play);
 void BossGate_WarpToBoss(PlayState* play);
+// Into the Queen's arena from the Husk's F3 (a rematch once she is beaten)
+void BossGate_EnterArena(PlayState* play);
 void BossGate_ReturnToDungeon(PlayState* play);

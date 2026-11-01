@@ -1,3 +1,4 @@
+#include "../Dungeon/HuskDungeon.h"
 #include "BossGate.h"
 #include "../UI/RetroUI.h"
 
@@ -106,6 +107,10 @@ int BossGate_Wins() {
 }
 
 bool BossGate_IsOpen() {
+    // In the Husk's grid floors the egg sacs open the way (Dungeon/HuskDungeon)
+    if (gPlayState != NULL && Husk_Active(gPlayState)) {
+        return Husk_GateOpen();
+    }
     return sWins >= kBossGateWins;
 }
 
@@ -147,7 +152,7 @@ void BossGate_Load(const nlohmann::json& j) {
 }
 
 std::string BossGate_OnVictory(PlayState* play) {
-    if (play == NULL || play->sceneNum != SCENE_DEKU_TREE || sCleared) {
+    if (play == NULL || play->sceneNum != SCENE_DEKU_TREE || sCleared || Husk_Active(play)) {
         return "";
     }
     if (sWins >= kBossGateWins) {
@@ -165,7 +170,7 @@ void BossGate_SetCleared() {
 }
 
 void BossGate_Tick(PlayState* play, Player* player) {
-    if (play->sceneNum != SCENE_DEKU_TREE) {
+    if (play->sceneNum != SCENE_DEKU_TREE || Husk_Active(play)) {
         return;
     }
     FindGate(play, player);
@@ -197,7 +202,7 @@ void BossGate_Tick(PlayState* play, Player* player) {
 }
 
 bool BossGate_OnStep(PlayState* play, Player* player) {
-    if (play->sceneNum != SCENE_DEKU_TREE || !OnGate(player->actor.world.pos) || sStillOnGate ||
+    if (play->sceneNum != SCENE_DEKU_TREE || Husk_Active(play) || !OnGate(player->actor.world.pos) || sStillOnGate ||
         play->transitionTrigger != TRANS_TRIGGER_OFF) {
         return false;
     }
@@ -273,6 +278,9 @@ bool BossGate_DrawPrompt(Retro::Painter& p, int x, int y, int w) {
 }
 
 bool BossGate_Position(PlayState* play, float& x, float& y, float& z) {
+    if (Husk_Active(play)) {
+        return Husk_GatePosition(x, y, z);
+    }
     if (play->sceneNum != SCENE_DEKU_TREE || !sFound) {
         return false;
     }
@@ -287,6 +295,11 @@ bool BossGate_InBossRoom(PlayState* play) {
 }
 
 void BossGate_WarpToBoss(PlayState* play) {
+    Warp(play, ENTR_DEKU_TREE_BOSS_ENTRANCE);
+}
+
+void BossGate_EnterArena(PlayState* play) {
+    sRematch = sCleared; // a cleared Queen is a rematch
     Warp(play, ENTR_DEKU_TREE_BOSS_ENTRANCE);
 }
 

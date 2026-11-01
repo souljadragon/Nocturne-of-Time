@@ -18,6 +18,7 @@
 #include "../Loot/EquipMenu.h"
 #include "../Moon/MoonHud.h"
 #include "../Moon/Moon.h"
+#include "../Dungeon/HuskDungeon.h"
 #include "../Boss/BossGate.h"
 
 #include <algorithm>
@@ -83,7 +84,11 @@ static void DrawFieldHud(PlayState* play) {
         {
             Painter p(&OVERLAY_DISP);
             p.FillScreen(Black);
-            p.Text(8, 4, std::string(SceneTitle(play)) + " MAP", White);
+            std::string mapTitle = std::string(SceneTitle(play)) + " MAP";
+            if (Husk_Active(play)) {
+                mapTitle = "HUSK F" + std::to_string(Husk_Floor() + 1) + " MAP";
+            }
+            p.Text(8, 4, mapTitle, White);
             p.Text(176, 4, "FACING", Green);
             p.Text(176 + 7 * kCharW, 4, FacingName(DungeonCrawler_GetFacing()), Yellow);
         }
@@ -137,6 +142,13 @@ static void DrawFieldHud(PlayState* play) {
     // Automap in the view's top-right corner (or the large map over everything when toggled)
     const int mapSize = 62;
     Automap_Draw(play, view.x + view.w - mapSize - 2, view.y + 2, mapSize);
+    // A burning Deku Stick: its steps left in the map's bottom-left corner
+    if (Husk_Active(play) && Husk_StickSteps() > 0 && !Automap_IsLarge()) {
+        OPEN_DISPS(play->state.gfxCtx);
+        Painter sp(&OVERLAY_DISP);
+        sp.Text(view.x + view.w - mapSize + 2, view.y + mapSize - 10, "✻" + std::to_string(Husk_StickSteps()), Orange);
+        CLOSE_DISPS(play->state.gfxCtx);
+    }
 
     OPEN_DISPS(play->state.gfxCtx);
     Painter p(&OVERLAY_DISP);
@@ -146,7 +158,14 @@ static void DrawFieldHud(PlayState* play) {
     p.Text(14, kMessageY + 6, "▶", Green);
     // The boss gate's prompt takes the window while it's up
     if (!BossGate_DrawPrompt(p, 26, kMessageY + 6, SCREEN_WIDTH - 14 - 26)) {
-        if (const char* note = MoonHud_NoticeText()) {
+        if (const char* husk = Husk_Active(play) ? Husk_Message() : nullptr) {
+            uint32_t c = Husk_MessageColor();
+            Color mc = { (u8)(c >> 24), (u8)(c >> 16), (u8)(c >> 8), 255 };
+            std::vector<std::string> lines = Wrap(husk, (size_t)(SCREEN_WIDTH - 14 - 26) / kCharW);
+            for (size_t i = 0; i < lines.size() && i < 2; i++) {
+                p.Text(26, kMessageY + 6 + (int)i * kLineH, lines[i], mc);
+            }
+        } else if (const char* note = MoonHud_NoticeText()) {
             p.Text(26, kMessageY + 6, note, Violet);
         }
     }

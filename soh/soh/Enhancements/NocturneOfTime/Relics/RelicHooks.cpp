@@ -1,7 +1,7 @@
 // Nocturne of Time: where Link finds his Relics in the game (see Relics.h for what they do).
 // - Fairy Slingshot: his from the start (Party.cpp).
-// - Kokiri Ocarina: turns up after 4 wins in the Hollowed Husk (BattleScene.cpp; given here too for saves that
-//   were past that point before Relics existed).
+// - Kokiri Ocarina: in the chest at the Husk's F1 (15,8) (Dungeon/HuskDungeon.cpp); given here too to saves that
+//   had already beaten Queen Gohma.
 // - Deku Shield: the vanilla Deku Shield. Buying it in the Kokiri Shop (or owning one already) gives the Relic.
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -28,7 +28,7 @@ void CheckRelics() {
     if (CHECK_OWNED_EQUIP(EQUIP_TYPE_SHIELD, EQUIP_INV_SHIELD_DEKU)) {
         Party_GiveRelic(RelicId::DekuShield);
     }
-    if (BossGate_Wins() >= 4 || BossGate_IsCleared()) {
+    if (BossGate_IsCleared()) { // (in the Husk it is in a chest on F1; saves from before then have it)
         Party_GiveRelic(RelicId::KokiriOcarina);
     }
 }

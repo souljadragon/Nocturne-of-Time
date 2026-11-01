@@ -36,3 +36,11 @@ int Battle_DangerLevel();
 
 // Abandon any battle without results (scene change, crawler switched off).
 void Battle_Abort();
+
+#ifdef __cplusplus
+#include <vector>
+// Fixed fights from the dungeon (egg sacs, the elite): exactly these EnemyKinds
+void Battle_StartFixed(PlayState* play, Player* player, const std::vector<int>& kinds);
+// A tripwire: a random encounter plus one foe
+void Battle_StartTripwire(PlayState* play, Player* player);
+#endif

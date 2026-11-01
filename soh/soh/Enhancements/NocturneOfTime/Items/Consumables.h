@@ -19,6 +19,7 @@ enum class ConsumableId : uint8_t {
     HylianHerb,
     ZoraWater,
     BottledFairy,
+    DekuStick, // a field tool: lit at a torch to burn webs (Dungeon/HuskDungeon)
     Count,
 };
 
@@ -29,6 +30,7 @@ struct ConsumableDef {
     ItemEffect effect;
     bool battleOnly = false; // e.g. revival: allies get back up after a battle anyway
     int dropWeight = 0;      // relative chance as an enemy drop
+    bool fieldTool = false;  // not used from menus or in battle (Deku Sticks: lit at torches)
 };
 
 const ConsumableDef& ConsumableOf(ConsumableId id);

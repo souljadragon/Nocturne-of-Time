@@ -496,7 +496,10 @@ void EquipMenu_Update(void* inputPtr) {
             if (in.up || in.down) {
                 Move(sMenu.useCursor, (int)owned.size(), in.up);
             } else if (in.a) {
-                if (def.battleOnly) {
+                if (def.fieldTool) {
+                    PlaySfx(NA_SE_SY_ERROR);
+                    sMenu.note = "Light it at a torch in the dungeon (A).";
+                } else if (def.battleOnly) {
                     PlaySfx(NA_SE_SY_ERROR);
                     sMenu.note = "That can only be used in battle.";
                 } else if (def.effect.target == TargetType::AllAllies) {
@@ -715,7 +718,7 @@ static void DrawItemsView(PlayState* play) {
     for (int i = 0; i < (int)owned.size(); i++) {
         const ConsumableDef& def = ConsumableOf(owned[i]);
         bool sel = listActive && i == useCursor;
-        Color c = sel ? Yellow : (def.battleOnly ? Grey : White);
+        Color c = sel ? Yellow : (def.battleOnly || def.fieldTool ? Grey : White);
         if (sel) {
             p.Text(14, y, "▶", Yellow);
         } else {
@@ -735,7 +738,7 @@ static void DrawItemsView(PlayState* play) {
             dy += kLineH;
         }
         dy += 4;
-        p.Text(kRightX, dy, def.battleOnly ? "BATTLE ONLY" : (def.effect.target == TargetType::AllAllies ? "PARTY" : "ONE ALLY"),
+        p.Text(kRightX, dy, def.fieldTool ? "FOR TORCHES" : def.battleOnly ? "BATTLE ONLY" : (def.effect.target == TargetType::AllAllies ? "PARTY" : "ONE ALLY"),
                Grey);
     } else {
         p.Text(kRightX, 42, "A:CHOOSE", Grey);

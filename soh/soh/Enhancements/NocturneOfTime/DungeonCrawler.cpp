@@ -11,6 +11,7 @@
 //   right stick     look up / down (springs back)
 //   A, B, items     unchanged (open doors, talk, swing sword...)
 
+#include "Dungeon/HuskDungeon.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -212,6 +213,17 @@ void StartStep(PlayState* play, Player* player, s8 dirFacing) {
     s16 gridYaw = FacingToYaw(sCrawler.facing);
     Vec3f dir = YawToDir(FacingToYaw(dirFacing));
     Vec3f from = player->actor.world.pos;
+
+    // The Husk's grid floors decide steps themselves (walls, webs, the gate, ledges)
+    if (Husk_Active(play)) {
+        Vec3f next;
+        if (!Husk_CanStep(play, from, dirFacing & 3, next)) {
+            StartBump(player, dir);
+        } else {
+            BeginStep(from, next, gridYaw);
+        }
+        return;
+    }
     Vec3f to = SnapToGrid({ from.x + dir.x * kTileSize, from.y, from.z + dir.z * kTileSize });
 
     WallHit wall = ProbeWalls(play, from, dir, DistXZ(from, to) + kWallClearance);
@@ -279,8 +291,13 @@ void UpdateAction(Player* player) {
                 sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
                 sCrawler.action = Action::None;
-                // Onto the boss gate: its prompt opens instead of an encounter roll
-                if (gPlayState != NULL && !BossGate_OnStep(gPlayState, player)) {
+                // Onto the boss gate: its prompt opens instead of an encounter roll; in the Husk, its tiles
+                // (chests, pits, tripwires...) do the same
+                if (gPlayState != NULL && Husk_Active(gPlayState)) {
+                    if (!Husk_OnStepEnd(gPlayState, player)) {
+                        Battle_OnStep(gPlayState, player);
+                    }
+                } else if (gPlayState != NULL && !BossGate_OnStep(gPlayState, player)) {
                     Battle_OnStep(gPlayState, player); // may start a battle
                 }
             }
@@ -433,6 +450,15 @@ bool OnFilterInput(Player* player, Input* input) {
 
     BossGate_Tick(play, player);
 
+    // The Husk puts Link on its floors (and keeps him there while the floor settles)
+    if (Husk_Active(play) && Husk_Frame(play, player)) {
+        ClearMovementInput(input);
+        for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
+            pad->button &= ~(BTN_A | BTN_B | BTN_CLEFT | BTN_CDOWN | BTN_CRIGHT | BTN_CUP);
+        }
+        return false;
+    }
+
     // R opens the party / equipment menu (not during a battle)
     if (!Battle_IsActive() && !EquipMenu_IsOpen() && !BossGate_PromptOpen() && (input->press.button & BTN_R) &&
         sCrawler.action == Action::None) {
@@ -463,6 +489,16 @@ bool OnFilterInput(Player* player, Input* input) {
         player->actor.world.rot.y = sCrawler.curYaw;
         player->actor.shape.rot.y = sCrawler.curYaw;
         return false; // Link stays frozen: no idle animation, fidgets or their sounds
+    }
+
+    // A in the Husk: torches, webs, stones, the ways up and down (and never Link's own A actions)
+    if (Husk_Active(play)) {
+        if ((input->press.button & BTN_A) && sCrawler.action == Action::None) {
+            Husk_OnA(play, player, sCrawler.facing);
+        }
+        for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
+            pad->button &= ~BTN_A;
+        }
     }
 
     const OSContPad& cur = input->cur;
@@ -599,6 +635,12 @@ bool DungeonCrawler_IsActive() {
 
 signed char DungeonCrawler_GetFacing() {
     return sCrawler.facing;
+}
+
+void DungeonCrawler_SnapFacing(signed char facing) {
+    sCrawler.facing = (s8)(facing & 3);
+    sCrawler.action = Action::None;
+    sCrawler.curYaw = FacingToYaw(sCrawler.facing);
 }
 
 void DungeonCrawler_SetFacing(signed char facing) {
