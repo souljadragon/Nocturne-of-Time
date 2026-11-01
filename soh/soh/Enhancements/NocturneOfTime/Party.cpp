@@ -102,6 +102,14 @@ void Party_Reset() {
 
 Combatant Party_Effective(const PartyMember& member) {
     Combatant c = member.base;
+    // Skills are learned with levels (the basic Attack, skills[0], is always known)
+    std::vector<Skill> known;
+    for (size_t i = 0; i < c.skills.size(); i++) {
+        if (i == 0 || c.skills[i].learnLevel <= c.level) {
+            known.push_back(c.skills[i]);
+        }
+    }
+    c.skills = known;
     ApplyGear(c, GearList(member));
     c.hp = std::clamp(member.base.hp, 0, c.maxHp);
     c.mp = std::clamp(member.base.mp, 0, c.maxMp);

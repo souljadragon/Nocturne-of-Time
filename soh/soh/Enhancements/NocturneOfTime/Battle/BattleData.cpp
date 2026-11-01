@@ -41,6 +41,21 @@ Skill Describe(Skill s, const char* description) {
     return s;
 }
 
+// Stat spells (power 0, Almighty so no affinity applies)
+Skill Stages(const char* name, TargetType target, int atk, int def, int agi, int mpCost, int learnLevel) {
+    Skill s = Make(name, Element::Almighty, target, 0, mpCost, 0, 1.0f);
+    s.buffAtk = atk;
+    s.buffDef = def;
+    s.buffAgi = agi;
+    s.learnLevel = learnLevel;
+    return s;
+}
+
+Skill Learned(Skill s, int level) {
+    s.learnLevel = level;
+    return s;
+}
+
 void SetAffinity(Combatant& c, Element e, Affinity a) {
     c.affinity[(size_t)e] = a;
 }
@@ -110,6 +125,15 @@ Combatant MakeLink(int level) {
                  "A whirling slash that hits every foe. Costs a little HP."),
         Describe(Make("Slingshot", Element::Pierce, TargetType::OneEnemy, 10, 0, 0, 0.9f),
                  "A Deku Seed shot. Pierces; good against fliers."),
+        // The Golden Goddesses' blessings (SMT's -kaja) and the light that breaks foes' blessings (Dekaja)
+        Describe(Stages("Din's Blessing", TargetType::AllAllies, 1, 0, 0, 4, 4),
+                 "Din's fire in every arm: the party's attack rises."),
+        Describe([] {
+                     Skill d = Stages("Dispelling Sun", TargetType::AllEnemies, 0, 0, 0, 5, 6);
+                     d.dispelBuffs = true;
+                     return d;
+                 }(),
+                 "A flash of the Sun's Song strips every foe of its blessings."),
     };
     GrowTo(c, level);
     return c;
@@ -139,6 +163,22 @@ Combatant MakeSaria(int level) {
                  "A gentle tune that restores one ally's HP."),
         Describe(Make("Minuet", Element::Almighty, TargetType::AllAllies, 25, 10, 0, 1.0f, true),
                  "The Minuet of Forest restores the whole party's HP."),
+        Describe(Stages("Nayru's Blessing", TargetType::AllAllies, 0, 1, 0, 4, 3),
+                 "Nayru's calm wards the party: defense rises."),
+        Describe(Stages("Mire Hex", TargetType::AllEnemies, 0, 0, -1, 4, 5),
+                 "Roots and bog slow every foe: their agility falls."),
+        Describe(Stages("Farore's Blessing", TargetType::AllAllies, 0, 0, 1, 4, 6),
+                 "Farore's wind at the party's heels: agility rises."),
+        Describe(Stages("Withering Hex", TargetType::AllEnemies, -1, 0, 0, 4, 8),
+                 "Saps the strength from every foe: their attack falls."),
+        Describe([] {
+                     Skill d = Stages("Cleansing Lullaby", TargetType::AllAllies, 0, 0, 0, 6, 9);
+                     d.dispelDebuffs = true;
+                     return d;
+                 }(),
+                 "Zelda's Lullaby, softly: lifts every hex from the party."),
+        Describe(Stages("Brittle Hex", TargetType::AllEnemies, 0, -1, 0, 4, 10),
+                 "Rot creeps into every foe's hide: their defense falls."),
     };
     GrowTo(c, level);
     return c;
@@ -186,6 +226,7 @@ Combatant MakeEnemy(EnemyKind kind) {
                 Make("Ram", Element::Strike, TargetType::OneEnemy, 12, 0),
                 Make("Spin", Element::Strike, TargetType::AllEnemies, 7, 0),
                 Inflicts(Make("Venom Fang", Element::Pierce, TargetType::OneEnemy, 8, 0), Ailment::Poison, 0.4f),
+                Stages("Silk Snare", TargetType::AllEnemies, 0, 0, -1, 0, 1),
             };
             c.xpReward = 28;
             c.rupeeMin = 8;
@@ -196,24 +237,37 @@ Combatant MakeEnemy(EnemyKind kind) {
             // Boss: see MakeQueenGohma for her larvae
             c.name = "Queen Gohma";
             c.boss = true;
+            c.ai = (int)EnemyAi::QueenGohma;
             c.pressTurns = 2;
-            c.level = 10;
-            c.maxHp = 520;
-            c.maxMp = 30;
-            c.st = 12;
-            c.ma = 8;
-            c.vi = 9;
-            c.ag = 5;
-            c.lu = 6;
+            c.level = 11;
+            c.maxHp = 280;
+            c.maxMp = 99;
+            c.st = 14;
+            c.ma = 9;
+            c.vi = 11;
+            c.ag = 7;
+            c.lu = 7;
             SetAffinity(c, Element::Pierce, Affinity::Weak); // the eye
             SetAffinity(c, Element::Fire, Affinity::Weak);
             SetAffinity(c, Element::Strike, Affinity::Resist); // armoured shell
             SetAffinity(c, Element::Shadow, Affinity::Null);
             c.skills = {
                 Make("Claw Swipe", Element::Slash, TargetType::OneEnemy, 16, 0),
-                Make("Stomp", Element::Strike, TargetType::AllEnemies, 10, 0, 0, 0.9f),
+                Make("Quake Stomp", Element::Strike, TargetType::AllEnemies, 11, 0, 0, 0.9f),
                 Inflicts(Make("Stunning Gaze", Element::Light, TargetType::OneEnemy, 5, 4, 0, 0.9f), Ailment::Stun,
                          0.45f),
+                [] {
+                    Skill sh = Stages("Hardened Shell", TargetType::Self, 0, 2, 1, 6, 1);
+                    sh.useText = "Queen Gohma's carapace hardens!";
+                    return sh;
+                }(),
+                [] {
+                    Skill f = Stages("Brood Fury", TargetType::Self, 0, 0, 0, 5, 1);
+                    f.charge = true;
+                    f.useText = "Queen Gohma's eye blazes red! She is gathering her strength...";
+                    return f;
+                }(),
+                Stages("Rattling Screech", TargetType::AllEnemies, 0, -1, 0, 4, 1),
             };
             c.xpReward = 450;
             c.rupeeMin = 50;
@@ -232,8 +286,15 @@ Combatant MakeEnemy(EnemyKind kind) {
             SetAffinity(c, Element::Slash, Affinity::Weak);
             SetAffinity(c, Element::Pierce, Affinity::Weak);
             SetAffinity(c, Element::Fire, Affinity::Weak);
-            c.skills = { Make("Headbutt", Element::Strike, TargetType::OneEnemy, 8, 0) };
-            c.timeBonus = 1;
+            c.ai = (int)EnemyAi::Brood;
+            c.skills = {
+                Make("Headbutt", Element::Strike, TargetType::OneEnemy, 8, 0),
+                [] {
+                    Skill ch = Stages("Brood Chant", TargetType::AllAllies, 1, 0, 0, 0, 1);
+                    ch.useText = "The larvae shriek for their queen!";
+                    return ch;
+                }(),
+            };
             c.xpReward = 15;
             c.rupeeMin = 1;
             c.rupeeMax = 4;
@@ -270,8 +331,20 @@ Combatant MakeEnemy(EnemyKind kind) {
     return c;
 }
 
-Combatant MakeQueenGohma(int larvae) {
+Combatant MakeQueenGohma(int larvae, int partyLevel) {
     Combatant c = MakeEnemy(EnemyKind::QueenGohma);
+    // She never falls behind the party: a party that out-levelled her still meets her a level above them
+    int lift = partyLevel + 1 - c.level;
+    if (lift > 0) {
+        c.level += lift;
+        c.maxHp += lift * 12;
+        c.st += lift;
+        c.vi += (lift * 2) / 3;
+        c.ag += (lift + 1) / 2;
+        c.ma += (lift + 1) / 2;
+        c.lu += lift / 2;
+        c.hp = c.maxHp;
+    }
     c.summonAt = 0.5f;
     c.summonText = "Queen Gohma lays her eggs!";
     for (int i = 0; i < larvae; i++) {

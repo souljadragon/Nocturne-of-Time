@@ -5,6 +5,7 @@
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.h"
+#include "GohmaPolicy.h"
 
 #include <cstdio>
 #include <deque>
@@ -198,12 +199,13 @@ static void TestVictoryAndRewards() {
 
 static void TestLinkFallingIsDefeat() {
     std::printf("Link falling is a defeat even if Saria stands\n");
-    Battle b({ MakeLink(5), MakeSaria(5) }, { MakeEnemy(EnemyKind::Skulltula) }, Steady());
+    Combatant spinner = MakeEnemy(EnemyKind::Skulltula);
+    spinner.skills = { spinner.skills[1] }; // only Spin, which hits everyone
+    Battle b({ MakeLink(5), MakeSaria(5) }, { spinner }, Steady());
     b.PartyMutable()[0].hp = 1;
     b.Guard();
     b.Guard(); // even guarded, any hit takes Link's last HP
     CHECK(b.Phase() == BattlePhase::EnemyTurn);
-    // Steady 0.5: skill index (int)(0.5*2)=1 -> Spin (all) hits Link for more than 1
     Events ev = b.EnemyAct();
     CHECK(b.Phase() == BattlePhase::Defeat);
     CHECK(HasEvent(ev, BattleEvent::Type::Defeat));
@@ -582,8 +584,13 @@ static void TestTimeLimit() {
     CHECK(b.Phase() == BattlePhase::Defeat && b.TimedOut());
     CHECK(b.Party()[0].Alive()); // not by damage
 
-    // The warning, and larvae buying time back
-    Battle w({ MakeLink(20), MakeSaria(20) }, { MakeEnemy(EnemyKind::GohmaLarva), tough }, Steady());
+    // The warning, and an enemy with a time bonus buying time back (Gohma's larvae no longer do: it made her
+    // fight easier; the mechanism stays for later bosses)
+    Combatant timed = MakeEnemy(EnemyKind::GohmaLarva);
+    timed.timeBonus = 1;
+    timed.ai = 0;
+    timed.skills = { timed.skills[0] };
+    Battle w({ MakeLink(20), MakeSaria(20) }, { timed, tough }, Steady());
     w.SetTurnLimit(6);
     w.Guard();
     w.Guard(); // turn 1 over
@@ -621,79 +628,171 @@ static void TestNoEscape() {
     CHECK(!ev.empty() && ev[0].text == "There's no escape!");
 }
 
-// A sensible player against Gohma at the level the gate is likely reached (8 battles from level 5)
+// Stat stages: -kaja / -nda spells, Dekaja / Dekunda, and Focus-style charging
+static int FindSkill(const Combatant& c, const char* name) {
+    for (int i = 0; i < (int)c.skills.size(); i++) {
+        if (c.skills[i].name == name) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void TestStages() {
+    std::printf("Stat stages\n");
+    CHECK(StageFactor(0) == 1.0f);
+    CHECK(std::fabs(StageFactor(2) - 1.5f) < 0.001f);
+    CHECK(std::fabs(StageFactor(-2) - 1.0f / 1.5f) < 0.001f);
+    CHECK(StageFactor(9) == StageFactor(kMaxStage));
+
+    Combatant link = MakeLink(10), saria = MakeSaria(10);
+    CHECK(FindSkill(link, "Din's Blessing") > 0 && FindSkill(link, "Dispelling Sun") > 0);
+    CHECK(FindSkill(saria, "Cleansing Lullaby") > 0 && FindSkill(saria, "Mire Hex") > 0);
+
+    // Din's Blessing: one icon, the whole party's attack +1, more damage
+    Combatant dummy = MakeEnemy(EnemyKind::DekuBaba);
+    dummy.maxHp = dummy.hp = 5000;
+    Battle b({ link, saria }, { dummy }, Steady());
+    int before = b.Icons().Total();
+    Events ev = b.UseSkill(FindSkill(link, "Din's Blessing"), -1);
+    CHECK(b.Party()[0].atkStage == 1 && b.Party()[1].atkStage == 1);
+    CHECK(b.Icons().Total() == before - 1);
+    CHECK(b.BaseDamage(b.Party()[0], b.Enemies()[0], link.skills[0]) ==
+          b.BaseDamage(link, dummy, link.skills[0])); // base damage leaves stages out...
+    int hp0 = b.Enemies()[0].hp;
+    b.UseSkill(0, 0); // Saria's staff, with +1 attack
+    int buffed = hp0 - b.Enemies()[0].hp;
+    Battle c({ link, saria }, { dummy }, Steady());
+    c.Guard();
+    int hp1 = c.Enemies()[0].hp;
+    c.UseSkill(0, 0);
+    int plain = hp1 - c.Enemies()[0].hp;
+    CHECK(buffed > plain); // ...the hit itself uses them
+
+    // Stages stop at +-4
+    Combatant g = MakeEnemy(EnemyKind::DekuBaba);
+    Battle d({ link, saria }, { g }, Steady());
+    for (int i = 0; i < 6; i++) {
+        d.PartyMutable()[0].atkStage = std::min(kMaxStage, d.Party()[0].atkStage + 1);
+    }
+    CHECK(d.Party()[0].atkStage == kMaxStage);
+
+    // Dispelling Sun strips only the raised stages; Cleansing Lullaby lifts only the lowered ones
+    Battle e({ link, saria }, { dummy }, Steady());
+    std::vector<Combatant>& foes = const_cast<std::vector<Combatant>&>(e.Enemies());
+    foes[0].defStage = 2;
+    foes[0].agiStage = -1;
+    e.UseSkill(FindSkill(link, "Dispelling Sun"), -1);
+    CHECK(e.Enemies()[0].defStage == 0 && e.Enemies()[0].agiStage == -1);
+    e.PartyMutable()[0].defStage = -2;
+    e.PartyMutable()[1].atkStage = 1;
+    e.UseSkill(FindSkill(saria, "Cleansing Lullaby"), -1);
+    CHECK(e.Party()[0].defStage == 0 && e.Party()[1].atkStage == 1);
+
+    // Agility stages: an evasive target is missed more (each miss costs two icons)
+    auto missRate = [&](int targetAgi) {
+        int misses = 0;
+        std::mt19937 gen(5);
+        std::uniform_real_distribution<float> u(0.0f, 0.99999f);
+        for (int i = 0; i < 2000; i++) {
+            Battle m({ link, saria }, { dummy }, [&] { return u(gen); });
+            const_cast<std::vector<Combatant>&>(m.Enemies())[0].agiStage = targetAgi;
+            Events r = m.UseSkill(0, 0);
+            misses += HasEvent(r, BattleEvent::Type::Miss) ? 1 : 0;
+        }
+        return misses;
+    };
+    CHECK(missRate(3) > missRate(0) + 200);
+}
+
+static void TestCharge() {
+    std::printf("Charged blows and guarding\n");
+    Combatant link = MakeLink(10), saria = MakeSaria(10);
+    Combatant g = MakeQueenGohma(2, 10);
+    g.skills = { g.skills[0], g.skills[FindSkill(g, "Brood Fury")] };
+    g.ai = 0;
+    auto hitOnLink = [&](bool charged, bool guard) {
+        Battle b({ link, saria }, { g }, Steady());
+        const_cast<std::vector<Combatant>&>(b.Enemies())[0].charged = charged;
+        const_cast<std::vector<Combatant>&>(b.Enemies())[0].skills = { g.skills[0] };
+        const_cast<std::vector<Combatant>&>(b.Enemies())[0].pressTurns = 1;
+        if (guard) {
+            b.Guard();
+        } else {
+            b.Pass();
+            b.Pass(); // Link's only icon, without guarding
+        }
+        int before = 0;
+        while (b.Phase() == BattlePhase::EnemyTurn) {
+            Events ev = b.EnemyAct();
+            for (const BattleEvent& e : ev) {
+                if (e.type == BattleEvent::Type::Hit && !e.targetIsEnemy && e.target == 0) {
+                    before += e.amount;
+                }
+            }
+        }
+        CHECK(!b.Enemies()[0].charged); // spent
+        return before;
+    };
+    // Steady targets Saria from the pool at 0.5, so make Link the only target
+    saria.hp = 0;
+    int plain = hitOnLink(false, false), charged = hitOnLink(true, false), guarded = hitOnLink(true, true);
+    CHECK(charged >= plain * 2);
+    CHECK(guarded * 2 <= charged + 1);
+}
+
+static void TestGohmaAi() {
+    std::printf("Queen Gohma's tactics\n");
+    std::mt19937 gen(3);
+    std::uniform_real_distribution<float> u(0.0f, 0.99999f);
+    int furyNotLast = 0, openings = 0, shellFirst = 0;
+    for (int round = 0; round < 200; round++) {
+        Combatant link = MakeLink(20), saria = MakeSaria(20);
+        Battle b({ link, saria }, { MakeQueenGohma(2, 9) }, [&] { return u(gen); });
+        int enemyTurn = 0;
+        for (int t = 0; t < 8 && b.Phase() != BattlePhase::Victory && b.Phase() != BattlePhase::Defeat; t++) {
+            while (b.Phase() == BattlePhase::PartyCommand) {
+                b.Guard();
+            }
+            enemyTurn++;
+            int action = 0;
+            while (b.Phase() == BattlePhase::EnemyTurn) {
+                int iconsBefore = b.Icons().Total();
+                Events ev = b.EnemyAct();
+                action++;
+                for (const BattleEvent& e : ev) {
+                    if (e.text.find("eye blazes red") != std::string::npos && iconsBefore > 1) {
+                        furyNotLast++;
+                    }
+                    if (enemyTurn == 1 && action == 1 && e.actor == 0 && e.target == -1) {
+                        openings++;
+                        shellFirst += e.text.find("carapace hardens") != std::string::npos ? 1 : 0;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(openings == 200 && shellFirst == 200); // the shell goes up first
+    CHECK(furyNotLast == 0);                     // the telegraph always leaves the party a turn to answer
+}
+
+// Gohma is the combat check: answering her moves is what wins (see tests/nocturne/GohmaPolicy.h)
 static void TestGohmaBalance() {
     std::printf("Gohma balance (simulated)\n");
     std::mt19937 gen(99);
-    std::uniform_real_distribution<float> dist(0.0f, 0.99999f);
-    for (int level : { 7, 8, 9 }) {
-        int wins = 0, timeouts = 0, totalTurns = 0;
-        const int kRounds = 400;
+    for (int level : { 8, 9, 10, 20 }) {
+        int naive = 0, smart = 0;
+        const int kRounds = 300;
         for (int round = 0; round < kRounds; round++) {
-            Combatant link = MakeLink(level), saria = MakeSaria(level);
-            link.weaponPower = 6; // a Hylian Blade or so
-            link.maxHp += 6;
-            link.hp = link.maxHp;
-            Battle b({ link, saria }, { MakeQueenGohma(2) }, [&] { return dist(gen); });
-            b.SetTurnLimit(kGohmaTurnLimit);
-            b.SetNoEscape(true);
-            int turns = 0;
-            bool wasParty = true;
-            while ((b.Phase() == BattlePhase::PartyCommand || b.Phase() == BattlePhase::EnemyTurn) && turns < 200) {
-                if (b.Phase() == BattlePhase::EnemyTurn) {
-                    if (wasParty) {
-                        turns++;
-                    }
-                    wasParty = false;
-                    b.EnemyAct();
-                    continue;
-                }
-                wasParty = true;
-                int who = b.ActivePartyMember();
-                const std::vector<Combatant>& e = b.Enemies();
-                int larvae = 0;
-                for (size_t i = 1; i < e.size(); i++) {
-                    larvae += e[i].Alive() ? 1 : 0;
-                }
-                if (who == 1) {
-                    // Saria: heal anyone below 45%, else wind
-                    int hurt = -1;
-                    for (int i = 0; i < 2; i++) {
-                        if (b.Party()[i].Alive() && b.Party()[i].hp * 100 < b.Party()[i].maxHp * 45) {
-                            hurt = i;
-                        }
-                    }
-                    if (hurt >= 0 && b.CanUseSkill(3)) {
-                        b.UseSkill(3, hurt);
-                    } else if (larvae >= 2 && b.CanUseSkill(2)) {
-                        b.UseSkill(2, -1);
-                    } else if (b.CanUseSkill(1)) {
-                        b.UseSkill(1, 0);
-                    } else {
-                        b.UseSkill(0, 0);
-                    }
-                } else {
-                    if (larvae >= 2 && b.CanUseSkill(1)) {
-                        b.UseSkill(1, -1); // Spin Attack
-                    } else {
-                        b.UseSkill(2, e[0].Alive() ? 0 : 1); // slingshot at the eye
-                    }
-                }
-            }
-            if (b.Phase() == BattlePhase::Victory) {
-                wins++;
-                totalTurns += turns + 1;
-            }
-            timeouts += b.TimedOut() ? 1 : 0;
+            naive += GohmaPolicy::Play(level, false, gen, 4).win ? 1 : 0;
+            smart += GohmaPolicy::Play(level, true, gen, 4).win ? 1 : 0;
         }
-        std::printf("  level %d: %d%% wins, %d%% timeouts, %.1f turns per win\n", level, wins * 100 / kRounds,
-                    timeouts * 100 / kRounds, wins ? (float)totalTurns / wins : 0.0f);
-        if (level == 9) {
-            CHECK(wins > kRounds / 2); // beatable when prepared
+        std::printf("  level %d: naive %d%%, smart %d%%\n", level, naive * 100 / kRounds, smart * 100 / kRounds);
+        CHECK(naive < kRounds / 4);   // hitting her weakness and healing isn't enough
+        if (level >= 9) {
+            CHECK(smart > kRounds * 2 / 5); // reading her moves is (a scripted player; people do better)
         }
-        if (level == 7) {
-            CHECK(wins < kRounds); // but not a pushover
-        }
+        CHECK(smart > naive * 2);
     }
 }
 
@@ -720,6 +819,9 @@ int main() {
     TestSummonAtHalf();
     TestTimeLimit();
     TestNoEscape();
+    TestStages();
+    TestCharge();
+    TestGohmaAi();
     TestGohmaBalance();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

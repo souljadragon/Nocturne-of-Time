@@ -35,7 +35,8 @@ enum class Affinity : uint8_t { Normal, Weak, Resist, Null, Repel, Drain };
 
 const char* AffinityName(Affinity a);
 
-enum class TargetType : uint8_t { OneEnemy, AllEnemies, OneAlly, AllAllies };
+// Targets are from the user's point of view: an enemy's "AllAllies" is its own side. Self is the user alone.
+enum class TargetType : uint8_t { OneEnemy, AllEnemies, OneAlly, AllAllies, Self };
 
 // Status ailments. Poison lasts until cured (even after the battle); Burn wears off after a few turns and at the
 // end of the battle. Neither can take the last HP. Stun is different: a skill that inflicts it makes the victim
@@ -59,7 +60,28 @@ struct Skill {
     Ailment inflict = Ailment::None; // chance to afflict the target on a hit
     float inflictChance = 0.0f;
     std::string description; // shown in the skill menu
+
+    // Support (no damage): stat stages added to every target, as SMT's -kaja (+) and -nda (-) spells.
+    int buffAtk = 0, buffDef = 0, buffAgi = 0;
+    bool dispelBuffs = false;   // removes every raised stage from the targets (SMT's Dekaja)
+    bool dispelDebuffs = false; // removes every lowered stage from the targets (SMT's Dekunda)
+    bool charge = false;        // the user's next damaging skill deals kChargeMult times the damage (Focus)
+    std::string useText;        // announcement instead of "X uses Y!" (e.g. a boss's telegraph)
+    int learnLevel = 1;         // party members know the skill from this level on
+
+    bool IsSupport() const {
+        return !heal && power == 0;
+    }
 };
+
+// Stat stages, from -kMaxStage to +kMaxStage, last for the whole battle (as in SMT III). Each stage is worth
+// kStageStep: +2 attack deals 1.5x damage, +2 defence takes 1/1.5x. Agility stages move hit chance by
+// kStageHit each: an evasive target makes the party miss, and a miss costs two Press Turn icons.
+constexpr int kMaxStage = 4;
+constexpr float kStageStep = 0.25f;
+constexpr float kStageHit = 0.08f;
+constexpr float kChargeMult = 2.5f;
+float StageFactor(int stage);
 
 // What a consumable does when used on someone (see Items/Consumables for the actual items).
 struct ItemEffect {
@@ -96,6 +118,9 @@ struct Combatant {
     int rupeeMin = 0, rupeeMax = 0;
 
     bool guarding = false;
+    int atkStage = 0, defStage = 0, agiStage = 0; // see kMaxStage
+    bool charged = false;                         // a Focus-like skill is waiting to be unleashed
+    int ai = 0;                                   // EnemyAi: how an enemy picks its actions
     Ailment ailment = Ailment::None;
     int ailmentTurns = 0; // turns left for ailments that wear off
     int stunTurns = 0;      // own turns still to be lost to Stun
@@ -117,6 +142,12 @@ struct Combatant {
         return affinity[(size_t)e];
     }
 };
+
+// How an enemy chooses what to do. Random: any affordable skill. QueenGohma: see Battle::ChooseGohmaSkill.
+enum class EnemyAi : int { Random, QueenGohma, Brood };
+
+// "ATK+2 DEF-1" for a combatant's stages, empty when none
+std::string StageText(const Combatant& c);
 
 // Press Turn icons for the side that is acting.
 struct PressTurns {
@@ -268,6 +299,14 @@ class Battle {
     void CheckSummons(Events& out);
     bool CheckEnd(Events& out);
     int CountAlive(const std::vector<Combatant>& side) const;
+    void ApplySupport(const Combatant& user, bool userIsEnemy, int userIndex, const Skill& skill, bool targetIsEnemy,
+                      int target, Events& out);
+    int ChooseEnemySkill(int enemy);
+    int ChooseGohmaSkill(const Combatant& gohma);
+    int FindSkill(const Combatant& c, const char* name) const;
+    int mEnemyTurns = 0;   // enemy turns started so far
+    int mActedThisTurn = 0; // actions the current enemy side has taken this turn
+    int mLastFury = -10;    // enemy turn of Queen Gohma's last Brood Fury
 
     std::vector<Combatant> mParty;
     std::vector<Combatant> mEnemies;

@@ -57,6 +57,7 @@ constexpr int kIntroFrames = 20;
 constexpr int kStartLevel = 5;
 constexpr float kDropChance = 0.35f; // per defeated enemy
 constexpr int kMaxDrops = 2;         // per battle
+constexpr int kSkillRows = 6; // skill list rows shown at once (Saria knows more; the list scrolls)
 constexpr f32 kEnemyDistance = 160.0f;
 constexpr f32 kEnemyMinDistance = 110.0f; // adult eye height: any nearer and their feet drop out of the view
 constexpr f32 kEnemyGap = 14.0f; // space between neighbouring enemies
@@ -102,6 +103,7 @@ struct Scene {
 
     int commandCursor = 0;
     int skillCursor = 0;  // index into the member's skills, from 1
+    int skillScroll = 0;  // first skill row shown (from 0)
     int targetCursor = 0;
     int pendingSkill = -1; // skill waiting for a target, or kPendingAnalyze
 
@@ -651,7 +653,12 @@ void StartRandomBattle(PlayState* play, Player* player) {
 void StartBossBattle(PlayState* play, Player* player) {
     // Two larvae, three under a gibbous or full moon
     int larvae = Moon_Phase() >= MoonPhase::SixEighths ? 3 : 2;
-    StartBattle(play, player, { MakeQueenGohma(larvae) }, true);
+    // She keeps up with the party: at least two levels above its highest member
+    int partyLevel = 1;
+    for (const PartyMember& m : Party_Members()) {
+        partyLevel = std::max(partyLevel, m.base.level);
+    }
+    StartBattle(play, player, { MakeQueenGohma(larvae, partyLevel) }, true);
 }
 
 // A larva hatches beside the queen, a little closer to the party
@@ -814,6 +821,12 @@ void QueueRewards() {
             lv.text = m.base.name + " reached level " + std::to_string(m.base.level) + "!\n" + grew;
             lv.hold = true;
             sScene.queue.push_back(lv);
+            for (const Skill& sk : m.base.skills) {
+                if (sk.learnLevel == m.base.level && sk.learnLevel > 1) {
+                    sScene.queue.push_back(
+                        HeldMessage(m.base.name + " learned " + sk.name + "!", 0x3CBCFC00u));
+                }
+            }
         }
         Party_ClampToMax(m);
     }
@@ -1234,6 +1247,7 @@ void HandleInput(const Buttons& in) {
                     case CMD_SKILL:
                         if (member.skills.size() > 1) {
                             sScene.skillCursor = 1;
+                            sScene.skillScroll = 0;
                             sScene.ui = Ui::Skills;
                             PlaySfx(NA_SE_SY_DECIDE);
                         } else {
@@ -1297,6 +1311,12 @@ void HandleInput(const Buttons& in) {
                 int i = sScene.skillCursor - 1;
                 i = (i + (in.up ? count - 1 : 1)) % count;
                 sScene.skillCursor = i + 1;
+                // keep the cursor in the visible rows
+                if (i < sScene.skillScroll) {
+                    sScene.skillScroll = i;
+                } else if (i >= sScene.skillScroll + kSkillRows) {
+                    sScene.skillScroll = i - kSkillRows + 1;
+                }
                 PlaySfx(NA_SE_SY_CURSOR);
             } else if (in.z) {
                 sScene.showSkillInfo = !sScene.showSkillInfo;
@@ -1695,7 +1715,7 @@ void Battle_DrawUi(PlayState* play) {
     const Combatant& active = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
     int listRows = 0;
     if (sScene.ui == Ui::Skills) {
-        listRows = (int)active.skills.size() - 1;
+        listRows = std::min((int)active.skills.size() - 1, kSkillRows);
     } else if (sScene.ui == Ui::Items) {
         listRows = (int)owned.size();
     } else if (sScene.ui == Ui::TargetEnemy) {
@@ -1719,7 +1739,21 @@ void Battle_DrawUi(PlayState* play) {
                           : sk.target == TargetType::AllEnemies ? "ALL FOES"
                           : sk.target == TargetType::OneAlly    ? "ONE ALLY"
                                                                 : "PARTY";
-        info3 = std::string(sk.heal ? "HEALS " : "POWER ") + std::to_string(sk.power) + "  " + who;
+        if (sk.IsSupport()) {
+            Combatant shown;
+            shown.atkStage = sk.buffAtk;
+            shown.defStage = sk.buffDef;
+            shown.agiStage = sk.buffAgi;
+            std::string what = StageText(shown);
+            if (sk.dispelBuffs) {
+                what = "REMOVES BUFFS";
+            } else if (sk.dispelDebuffs) {
+                what = "REMOVES HEXES";
+            }
+            info3 = what + "  " + who;
+        } else {
+            info3 = std::string(sk.heal ? "HEALS " : "POWER ") + std::to_string(sk.power) + "  " + who;
+        }
     }
     if (sScene.ui == Ui::Items && sScene.showSkillInfo && !owned.empty()) {
         showInfo = true;
@@ -1786,6 +1820,29 @@ void Battle_DrawUi(PlayState* play) {
         if (sScene.messageHeld && blinkOn) {
             p.Text(msgX + msgW - 14, msgY + msgH - 10, "▼", Yellow); // press A
         }
+    } else if (commandUi) {
+        // Between messages: the stat stages in play, the party's on top (blue) and the foes' below (violet)
+        auto stageLine = [&](const std::vector<Combatant>& side) {
+            std::string line;
+            for (const Combatant& c : side) {
+                std::string st = StageText(c);
+                if (c.Alive() && !st.empty()) {
+                    std::string who = Upper(c.name);
+                    size_t sp = who.find(' ');
+                    who = who.substr(0, std::min<size_t>(sp == std::string::npos ? who.size() : sp, 6));
+                    line += (line.empty() ? "" : "  ") + who + " " + st;
+                }
+            }
+            return line;
+        };
+        std::string ours = stageLine(b.Party()), theirs = stageLine(b.Enemies());
+        size_t chars = (size_t)(msgW - 28) / kCharW;
+        if (!ours.empty()) {
+            p.Text(msgX + 20, msgY + 6, Fit(ours, chars), Blue);
+        }
+        if (!theirs.empty()) {
+            p.Text(msgX + 20, msgY + 6 + kLineH, Fit(theirs, chars), Violet);
+        }
     }
 
     // ---- The boss's title card, over the bottom of the view as she lands
@@ -1822,19 +1879,30 @@ void Battle_DrawUi(PlayState* play) {
     };
 
     if (sScene.ui == Ui::Skills) {
-        for (int i = 1; i < (int)active.skills.size(); i++) {
+        int total = (int)active.skills.size() - 1;
+        int first = std::clamp(sScene.skillScroll, 0, std::max(0, total - kSkillRows));
+        for (int i = 1 + first; i < (int)active.skills.size() && i <= first + kSkillRows; i++) {
             const Skill& s = active.skills[i];
-            int y = listY + 5 + (i - 1) * kLineH;
+            int y = listY + 5 + (i - 1 - first) * kLineH;
             bool sel = i == sScene.skillCursor;
             bool usable = b.CanUseSkill(i);
             Color c = sel ? Yellow : (usable ? White : Grey);
             // Columns: name, element (or Heal), cost right-aligned
             std::string cost = s.mpCost > 0 ? std::to_string(s.mpCost) + "MP"
                                             : (s.hpCost > 0 ? std::to_string(s.hpCost) + "HP" : "");
-            std::string element = s.heal ? "Heal" : ElementName(s.element);
+            std::string element = s.heal                                  ? "Heal"
+                                  : s.dispelBuffs || s.dispelDebuffs     ? "Dispel"
+                                  : s.IsSupport() && s.target == TargetType::AllEnemies ? "Hex"
+                                  : s.IsSupport()                        ? "Bless"
+                                                                         : ElementName(s.element);
             option(listX + 4, y, Fit(s.name, 13), sel, usable);
             p.Text(listX + 4 + 15 * kCharW, y, element.substr(0, 6), sel ? Yellow : (usable ? Green : Grey));
             p.TextRight(listX + listW - 6, y, cost, c);
+        }
+        if (total > kSkillRows) {
+            char more[16];
+            snprintf(more, sizeof(more), "%d/%d", sScene.skillCursor, total);
+            p.Text(listX + 2, listY - 10, more, Grey);
         }
     }
 

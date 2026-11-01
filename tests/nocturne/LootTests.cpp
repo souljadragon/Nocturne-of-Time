@@ -203,14 +203,26 @@ static void TestLore() {
             CHECK(b.lore.size() > b.description.size());
         }
     }
-    for (int i = 0; i < 200; i++) {
+    // Every Rare name has a story of its own: no two names share one, and none is the plain description
+    std::map<std::string, std::string> seen;
+    for (int i = 0; i < 6000; i++) {
         Item r = RollItemOfRarity(5, Rarity::Rare, Rng());
         std::string lore = ItemLore(r);
-        CHECK(lore.find(BaseOf(r).name) != std::string::npos); // "Once an ordinary <base>..."
-        CHECK(lore.find("Something changed it") == std::string::npos); // every first word has a history
+        CHECK(lore != ItemDescription(r));
+        CHECK(lore.size() <= 128); // one page of the item panel
+        auto it = seen.find(r.name);
+        if (it == seen.end()) {
+            for (const auto& [name, other] : seen) {
+                CHECK(other != lore);
+            }
+            seen[r.name] = lore;
+        } else {
+            CHECK(it->second == lore); // the same name always tells the same story
+        }
         Item u = RollItemOfRarity(5, Rarity::Uncommon, Rng());
         CHECK(ItemLore(u) == ItemDescription(u));
     }
+    CHECK(seen.size() == 150); // 10 first words x 5 second words x 3 slots
     CHECK(ItemLore(MakeCommon(100)).find("Biggoron") != std::string::npos);
 }
 
@@ -224,6 +236,18 @@ static void TestParty() {
     Combatant start = Party_Effective(members[0]);
     CHECK(start.weaponPower == 3);
     CHECK(start.hp == start.maxHp); // healed including gear HP
+    // Skills come with levels: at 5 Saria knows Mire Hex (5) but not Brittle Hex (10)
+    auto knows = [](const Combatant& c, const char* n) {
+        for (const Skill& sk : c.skills) {
+            if (sk.name == n) {
+                return true;
+            }
+        }
+        return false;
+    };
+    Combatant saria5 = Party_Effective(members[1]);
+    CHECK(knows(saria5, "Mire Hex") && !knows(saria5, "Brittle Hex"));
+    CHECK(saria5.skills[0].name == "Attack");
 
     // Equip a bigger sword: the old one goes to the bag
     Item blade = MakeCommon(2); // Hylian Blade, Attack +6

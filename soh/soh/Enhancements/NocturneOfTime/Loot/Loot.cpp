@@ -1,4 +1,5 @@
 #include "Loot.h"
+#include "RareLore.h"
 
 #include <algorithm>
 #include <cmath>
@@ -526,31 +527,13 @@ std::string ItemLore(const Item& item) {
     if (item.rarity != Rarity::Rare) {
         return b.description;
     }
-    // Rare items: a history from the first word of their name
-    static const std::pair<const char*, const char*> kHistory[] = {
-        { "Gloom", "The endless gloom of the Lost Woods still clings to it." },
-        { "Doom", "Every hand that carried it before met a grim end." },
-        { "Dusk", "It seems to darken as evening falls." },
-        { "Grim", "Scarred and pitted from countless battles." },
-        { "Storm", "The air crackles faintly around it." },
-        { "Ember", "Faintly warm, as if pulled from a dying fire." },
-        { "Bone", "Worked with pale bone from no beast anyone can name." },
-        { "Shadow", "It casts no shadow of its own." },
-        { "Moon", "It glows softly under the moon, brightest when it is full." },
-        { "Ruin", "Recovered from the ruins of a fallen part of Hyrule." },
-    };
-    std::string history = "Something changed it long ago.";
-    for (const auto& [word, text] : kHistory) {
-        if (item.name.rfind(word, 0) == 0) {
-            history = text;
-            break;
+    // Rare items: each name has a story of its own
+    for (const auto& [name, lore] : kRareLore) {
+        if (item.name == name) {
+            return lore;
         }
     }
-    const char* article = (b.name[0] == 'A' || b.name[0] == 'E' || b.name[0] == 'I' || b.name[0] == 'O' ||
-                           b.name[0] == 'U')
-                              ? "an"
-                              : "a";
-    return history + " Once " + article + " ordinary " + b.name + ", it is something else now.";
+    return b.description; // (a name from an older save that has no story yet)
 }
 
 std::string DescribeMod(const StatMod& m) {

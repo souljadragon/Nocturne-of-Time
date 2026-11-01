@@ -51,6 +51,27 @@ const char* AffinityName(Affinity a) {
     }
 }
 
+float StageFactor(int stage) {
+    stage = std::clamp(stage, -kMaxStage, kMaxStage);
+    return stage >= 0 ? 1.0f + kStageStep * stage : 1.0f / (1.0f + kStageStep * -stage);
+}
+
+std::string StageText(const Combatant& c) {
+    std::string out;
+    auto add = [&](const char* tag, int stage) {
+        if (stage != 0) {
+            if (!out.empty()) {
+                out += " ";
+            }
+            out += std::string(tag) + (stage > 0 ? "+" : "-") + std::to_string(std::abs(stage));
+        }
+    };
+    add("ATK", c.atkStage);
+    add("DEF", c.defStage);
+    add("AGI", c.agiStage);
+    return out;
+}
+
 // ---- Press Turn icons -----------------------------------------------------------------------------------
 
 void PressTurns::UseFull() {
@@ -304,6 +325,8 @@ void Battle::StartEnemyTurn(Events& out) {
         c.guarding = false;
     }
     out.push_back(Ev(BattleEvent::Type::PhaseChange, true, -1, false, -1, 0, "Enemy turn"));
+    mEnemyTurns++;
+    mActedThisTurn = 0;
     TickAilments(mEnemies, true, out);
     mIcons = { CountIcons(mEnemies, true, out), 0 };
     mEnemyCursor = 0;
@@ -429,10 +452,66 @@ int Battle::BaseDamage(const Combatant& attacker, const Combatant& defender, con
     return std::max(1, (int)std::lround(power * ratio));
 }
 
+void Battle::ApplySupport(const Combatant& user, bool userIsEnemy, int userIndex, const Skill& skill,
+                          bool targetIsEnemy, int target, Events& out) {
+    std::vector<Combatant>& side = targetIsEnemy ? mEnemies : mParty;
+    Combatant& c = side[target];
+    if (!c.Alive()) {
+        return;
+    }
+    auto say = [&](const std::string& text, uint32_t color) {
+        BattleEvent e = Ev(BattleEvent::Type::Message, userIsEnemy, userIndex, targetIsEnemy, target, 0, text);
+        e.color = color;
+        out.push_back(e);
+    };
+    const uint32_t kUp = 0x3CBCFC00u, kDown = 0xC8A0FF00u;
+    if (skill.dispelBuffs) {
+        bool any = c.atkStage > 0 || c.defStage > 0 || c.agiStage > 0;
+        c.atkStage = std::min(c.atkStage, 0);
+        c.defStage = std::min(c.defStage, 0);
+        c.agiStage = std::min(c.agiStage, 0);
+        if (any) {
+            say(c.name + "'s blessings are stripped away!", kDown);
+        }
+    }
+    if (skill.dispelDebuffs) {
+        bool any = c.atkStage < 0 || c.defStage < 0 || c.agiStage < 0;
+        c.atkStage = std::max(c.atkStage, 0);
+        c.defStage = std::max(c.defStage, 0);
+        c.agiStage = std::max(c.agiStage, 0);
+        if (any) {
+            say(c.name + " shakes off the hexes!", kUp);
+        }
+    }
+    auto shift = [&](int& stage, int by, const char* what) {
+        if (by == 0) {
+            return;
+        }
+        int before = stage;
+        stage = std::clamp(stage + by, -kMaxStage, kMaxStage);
+        if (stage == before) {
+            say(c.name + "'s " + what + (by > 0 ? " can't go any higher." : " can't go any lower."), 0);
+        } else {
+            say(c.name + "'s " + what + (by > 0 ? " rises!" : " falls!"), by > 0 ? kUp : kDown);
+        }
+    };
+    shift(c.atkStage, skill.buffAtk, "attack");
+    shift(c.defStage, skill.buffDef, "defense");
+    shift(c.agiStage, skill.buffAgi, "agility");
+    if (skill.charge) {
+        c.charged = true;
+    }
+}
+
 Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIndex, const Skill& skill,
                                    bool targetIsEnemy, int target, Events& out) {
     std::vector<Combatant>& side = targetIsEnemy ? mEnemies : mParty;
     Combatant& def = side[target];
+
+    if (skill.IsSupport()) {
+        ApplySupport(user, userIsEnemy, userIndex, skill, targetIsEnemy, target, out);
+        return Outcome::Normal;
+    }
 
     if (skill.heal) {
         if (!def.Alive()) {
@@ -462,7 +541,8 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
 
     // Accuracy: only attacks that would connect can miss
     if (aff == Affinity::Normal || aff == Affinity::Weak || aff == Affinity::Resist) {
-        float hitChance = std::clamp(skill.accuracy + (user.ag - def.ag) * 0.01f, 0.5f, 0.99f);
+        float hitChance = skill.accuracy + (user.ag - def.ag) * 0.01f + (user.agiStage - def.agiStage) * kStageHit;
+        hitChance = std::clamp(hitChance, 0.3f, 0.99f);
         if (mRand() >= hitChance) {
             out.push_back(Ev(BattleEvent::Type::Miss, userIsEnemy, userIndex, targetIsEnemy, target, 0, "Miss!"));
             return Outcome::MissOrNull;
@@ -521,6 +601,10 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     if (def.guarding) {
         mult *= 0.5f;
     }
+    mult *= StageFactor(user.atkStage) / StageFactor(def.defStage);
+    if (user.charged) {
+        mult *= kChargeMult; // spent by the caller once the whole skill has landed
+    }
     dmg = std::max(1, (int)std::lround(dmg * mult));
 
     def.hp = std::max(0, def.hp - dmg);
@@ -559,6 +643,42 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     return (weak || crit) ? Outcome::WeakOrCrit : Outcome::Normal;
 }
 
+namespace {
+
+// Who a skill hits. `ownSide` is the user's side, `otherSide` the opponents'; returns the side hit and indices.
+std::vector<int> GatherTargets(const Skill& s, int userIndex, int chosen, const std::vector<Combatant>& ownSide,
+                               const std::vector<Combatant>& otherSide, bool& onOwnSide) {
+    std::vector<int> targets;
+    onOwnSide = s.target == TargetType::OneAlly || s.target == TargetType::AllAllies || s.target == TargetType::Self;
+    const std::vector<Combatant>& side = onOwnSide ? ownSide : otherSide;
+    if (s.target == TargetType::Self) {
+        targets.push_back(userIndex);
+    } else if (s.target == TargetType::AllEnemies || s.target == TargetType::AllAllies) {
+        for (int i = 0; i < (int)side.size(); i++) {
+            if (side[i].Alive()) {
+                targets.push_back(i);
+            }
+        }
+    } else {
+        // Retarget if the chosen one is already down (heals may only target the living)
+        if (chosen < 0 || chosen >= (int)side.size() || !side[chosen].Alive()) {
+            chosen = -1;
+            for (int i = 0; i < (int)side.size(); i++) {
+                if (side[i].Alive()) {
+                    chosen = i;
+                    break;
+                }
+            }
+        }
+        if (chosen >= 0) {
+            targets.push_back(chosen);
+        }
+    }
+    return targets;
+}
+
+} // namespace
+
 bool Battle::CanUseSkill(int skill) const {
     if (mPhase != BattlePhase::PartyCommand || mActive < 0) {
         return false;
@@ -581,34 +701,13 @@ Events Battle::UseSkill(int skill, int target) {
     user.mp -= s.mpCost;
     user.hp -= s.hpCost;
 
-    out.push_back(Msg(skill == 0 ? user.name + " attacks!" : user.name + " uses " + s.name + "!"));
+    out.push_back(Msg(!s.useText.empty() ? s.useText
+                      : skill == 0       ? user.name + " attacks!"
+                                         : user.name + " uses " + s.name + "!"));
 
-    bool targetsEnemies = s.target == TargetType::OneEnemy || s.target == TargetType::AllEnemies;
-    bool all = s.target == TargetType::AllEnemies || s.target == TargetType::AllAllies;
-    std::vector<Combatant>& side = targetsEnemies ? mEnemies : mParty;
-
-    std::vector<int> targets;
-    if (all) {
-        for (int i = 0; i < (int)side.size(); i++) {
-            if (side[i].Alive()) {
-                targets.push_back(i);
-            }
-        }
-    } else {
-        // Retarget if the chosen one is already down (heals may only target the living)
-        if (target < 0 || target >= (int)side.size() || !side[target].Alive()) {
-            target = -1;
-            for (int i = 0; i < (int)side.size(); i++) {
-                if (side[i].Alive()) {
-                    target = i;
-                    break;
-                }
-            }
-        }
-        if (target >= 0) {
-            targets.push_back(target);
-        }
-    }
+    bool ownSide = false;
+    std::vector<int> targets = GatherTargets(s, mActive, target, mParty, mEnemies, ownSide);
+    bool targetsEnemies = !ownSide;
 
     Outcome worst = Outcome::Normal;
     for (int t : targets) {
@@ -617,6 +716,9 @@ Events Battle::UseSkill(int skill, int target) {
         if (!user.Alive()) {
             break; // repelled to death
         }
+    }
+    if (!s.IsSupport() && !s.heal) {
+        user.charged = false;
     }
 
     SpendIcons(worst);
@@ -750,29 +852,28 @@ Events Battle::EnemyAct() {
     int ei = mEnemyCursor;
     Combatant& enemy = mEnemies[ei];
 
-    // Pick an affordable skill at random
-    std::vector<int> usable;
-    for (int i = 0; i < (int)enemy.skills.size(); i++) {
-        if (enemy.mp >= enemy.skills[i].mpCost && enemy.hp > enemy.skills[i].hpCost) {
-            usable.push_back(i);
-        }
-    }
-    int si = usable.empty() ? 0 : usable[std::min((int)usable.size() - 1, (int)(mRand() * usable.size()))];
+    int si = ChooseEnemySkill(ei);
     const Skill s = enemy.skills[si];
     enemy.mp -= s.mpCost;
     enemy.hp -= s.hpCost;
+    mActedThisTurn++;
 
     // (the actor is set so the scene can animate the attacker; target -1 marks it as the announcement)
-    out.push_back(Ev(BattleEvent::Type::Message, true, ei, false, -1, 0,
-                     enemy.name + (si == 0 ? " attacks!" : " uses " + s.name + "!")));
+    BattleEvent announce = Ev(BattleEvent::Type::Message, true, ei, false, -1, 0,
+                              !s.useText.empty() ? s.useText
+                              : si == 0          ? enemy.name + " attacks!"
+                                                 : enemy.name + " uses " + s.name + "!");
+    if (s.charge) {
+        announce.color = 0xF8380000u; // the telegraph: red
+        announce.hold = true;
+    }
+    out.push_back(announce);
 
     std::vector<int> targets;
-    if (s.target == TargetType::AllEnemies) {
-        for (int i = 0; i < (int)mParty.size(); i++) {
-            if (mParty[i].Alive()) {
-                targets.push_back(i);
-            }
-        }
+    bool ownSide = s.target == TargetType::OneAlly || s.target == TargetType::AllAllies || s.target == TargetType::Self;
+    if (ownSide || s.target == TargetType::AllEnemies) {
+        bool unused;
+        targets = GatherTargets(s, ei, ei, mEnemies, mParty, unused);
     } else {
         // Enemies know weaknesses: usually go for a party member weak to this attack
         std::vector<int> alive, weak;
@@ -792,10 +893,13 @@ Events Battle::EnemyAct() {
 
     Outcome worst = Outcome::Normal;
     for (int t : targets) {
-        worst = std::max(worst, ApplySkill(enemy, true, ei, s, false, t, out));
-        if (!enemy.Alive()) {
+        worst = std::max(worst, ApplySkill(mEnemies[ei], true, ei, s, ownSide, t, out));
+        if (!mEnemies[ei].Alive()) {
             break;
         }
+    }
+    if (!s.IsSupport() && !s.heal) {
+        mEnemies[ei].charged = false;
     }
     SpendIcons(worst);
     if (worst == Outcome::RepelOrDrain || worst == Outcome::MissOrNull) {
@@ -804,6 +908,106 @@ Events Battle::EnemyAct() {
     }
     AfterAction(out);
     return out;
+}
+
+int Battle::FindSkill(const Combatant& c, const char* name) const {
+    for (int i = 0; i < (int)c.skills.size(); i++) {
+        if (c.skills[i].name == name && c.mp >= c.skills[i].mpCost && c.hp > c.skills[i].hpCost) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int Battle::ChooseEnemySkill(int ei) {
+    const Combatant& enemy = mEnemies[ei];
+    if (enemy.ai == (int)EnemyAi::QueenGohma) {
+        int si = ChooseGohmaSkill(enemy);
+        if (si >= 0) {
+            return si;
+        }
+    }
+    if (enemy.ai == (int)EnemyAi::Brood) {
+        // Larvae: cheer their queen on now and then (only while she lives and isn't already at the top)
+        int cheer = FindSkill(enemy, "Brood Chant");
+        bool queenUp = false;
+        for (const Combatant& e : mEnemies) {
+            queenUp = queenUp || (e.Alive() && e.boss && e.atkStage < 2);
+        }
+        if (cheer >= 0 && queenUp && mRand() < 0.35f) {
+            return cheer;
+        }
+        return 0;
+    }
+    // Any affordable skill at random; a stat spell isn't cast again while its targets already have it
+    std::vector<int> usable;
+    for (int i = 0; i < (int)enemy.skills.size(); i++) {
+        const Skill& s = enemy.skills[i];
+        if (enemy.mp < s.mpCost || enemy.hp <= s.hpCost) {
+            continue;
+        }
+        if (s.IsSupport() && s.target == TargetType::AllEnemies) {
+            bool worthIt = false;
+            for (const Combatant& c : mParty) {
+                worthIt = worthIt || (c.Alive() && ((s.buffAtk < 0 && c.atkStage > -2) ||
+                                                     (s.buffDef < 0 && c.defStage > -2) ||
+                                                     (s.buffAgi < 0 && c.agiStage > -2)));
+            }
+            if (!worthIt) {
+                continue;
+            }
+        }
+        usable.push_back(i);
+    }
+    return usable.empty() ? 0 : usable[std::min((int)usable.size() - 1, (int)(mRand() * usable.size()))];
+}
+
+// Queen Gohma is the first real test of the Press Turn rules, in the spirit of SMT's Matador and Minotaur:
+// - Hardened Shell raises her defense and agility. Left alone she shrugs off blows and the party starts to
+//   miss (two icons per miss), so she has to be stripped (Dispelling Sun) or hexed back down.
+// - Brood Fury is a telegraph: she only uses it with her last action of a turn, and her next damaging move
+//   hits 2.5x as hard. Guard (or kill her first) is the answer.
+// - Rattling Screech lowers the party's defense, to be cleansed with the Lullaby or out-blessed.
+// Below half HP she grows reckless: Brood Fury more often and no more re-hardening than once in a while.
+int Battle::ChooseGohmaSkill(const Combatant& g) {
+    bool lastAction = mIcons.Total() <= 1;
+    bool enraged = g.hp * 2 <= g.maxHp;
+    int shell = FindSkill(g, "Hardened Shell"), fury = FindSkill(g, "Brood Fury"),
+        screech = FindSkill(g, "Rattling Screech"), gaze = FindSkill(g, "Stunning Gaze"), stomp = FindSkill(g, "Quake Stomp");
+    if (g.charged) {
+        // Unleash: the whole party if more than one stands, else the claw
+        int alive = CountAlive(mParty);
+        return (alive > 1 && stomp >= 0 && mRand() < 0.6f) ? stomp : 0;
+    }
+    // Her opening: the shell goes up on her first action
+    if (mEnemyTurns == 1 && mActedThisTurn == 0 && shell >= 0) {
+        return shell;
+    }
+    // Re-harden when stripped (less eagerly once enraged, and never twice in one turn)
+    if (shell >= 0 && g.defStage <= 0 && mActedThisTurn == 0 && mRand() < (enraged ? 0.25f : 0.45f)) {
+        return shell;
+    }
+    // Telegraph with her last icon, so the party gets a turn to answer; at most every third turn
+    if (fury >= 0 && lastAction && mEnemyTurns >= 2 && mEnemyTurns - mLastFury >= 3 &&
+        mRand() < (enraged ? 0.6f : 0.4f)) {
+        mLastFury = mEnemyTurns;
+        return fury;
+    }
+    bool partyDefUp = false;
+    for (const Combatant& c : mParty) {
+        partyDefUp = partyDefUp || (c.Alive() && c.defStage > -2);
+    }
+    float r = mRand();
+    if (screech >= 0 && partyDefUp && r < 0.18f) {
+        return screech;
+    }
+    if (gaze >= 0 && r < 0.38f) {
+        return gaze;
+    }
+    if (stomp >= 0 && r < 0.62f) {
+        return stomp;
+    }
+    return 0; // Claw Swipe
 }
 
 int Battle::XpEarned() const {
