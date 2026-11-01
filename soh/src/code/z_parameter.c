@@ -1,3 +1,4 @@
+#include "soh/Enhancements/NocturneOfTime/AdultTimeline.h"
 #include "global.h"
 #include "vt.h"
 #include "textures/parameter_static/parameter_static.h"
@@ -5367,7 +5368,7 @@ void Interface_Draw(PlayState* play) {
                 // Rupee Counter
                 gDPPipeSync(OVERLAY_DISP++);
 
-                if (gSaveContext.rupees == CUR_CAPACITY(UPG_WALLET)) {
+                if (gSaveContext.rupees == Nocturne_WalletCapacity(CUR_CAPACITY(UPG_WALLET))) {
                     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 120, 255, 0, interfaceCtx->magicAlpha);
                 } else if (gSaveContext.rupees != 0) {
                     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->magicAlpha);
@@ -5397,6 +5398,17 @@ void Interface_Draw(PlayState* play) {
 
                 svar2 = rupeeDigitsFirst[CUR_UPG_VALUE(UPG_WALLET)];
                 svar5 = rupeeDigitsCount[CUR_UPG_VALUE(UPG_WALLET)];
+
+                // Nocturne of Time: no wallet limit, so four digits (thousands first)
+                if (Nocturne_WalletCapacity(0) > 999) {
+                    s16 r = CLAMP(gSaveContext.rupees, 0, NOCTURNE_WALLET_MAX);
+                    interfaceCtx->counterDigits[0] = r / 1000;
+                    interfaceCtx->counterDigits[1] = (r / 100) % 10;
+                    interfaceCtx->counterDigits[2] = (r / 10) % 10;
+                    interfaceCtx->counterDigits[3] = r % 10;
+                    svar2 = 0;
+                    svar5 = 4;
+                }
 
                 for (svar1 = 0, svar3 = 16; svar1 < svar5; svar1++, svar2++, svar3 += 8) {
                     OVERLAY_DISP = Gfx_TextureI8(OVERLAY_DISP, ((u8*)digitTextures[interfaceCtx->counterDigits[svar2]]),
@@ -6695,7 +6707,7 @@ void Interface_Update(PlayState* play) {
 
     if (gSaveContext.rupeeAccumulator != 0) {
         if (gSaveContext.rupeeAccumulator > 0) {
-            if (gSaveContext.rupees < CUR_CAPACITY(UPG_WALLET)) {
+            if (gSaveContext.rupees < Nocturne_WalletCapacity(CUR_CAPACITY(UPG_WALLET))) {
                 gSaveContext.rupeeAccumulator--;
                 gSaveContext.rupees++;
                 Audio_PlaySfxGeneral(NA_SE_SY_RUPY_COUNT, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
@@ -6703,7 +6715,7 @@ void Interface_Update(PlayState* play) {
             } else {
                 // "Rupee Amount MAX = %d"
                 osSyncPrintf("ルピー数ＭＡＸ = %d\n", CUR_CAPACITY(UPG_WALLET));
-                gSaveContext.rupees = CUR_CAPACITY(UPG_WALLET);
+                gSaveContext.rupees = Nocturne_WalletCapacity(CUR_CAPACITY(UPG_WALLET));
                 gSaveContext.rupeeAccumulator = 0;
             }
         } else if (gSaveContext.rupees != 0) {

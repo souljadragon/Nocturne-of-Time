@@ -35,6 +35,10 @@ RegisterShipInitFunc initFunc(RegisterAdultTimeline,
 
 } // namespace
 
+extern "C" int Nocturne_WalletCapacity(int vanillaCapacity) {
+    return CVarGetInteger(CVAR_ENHANCEMENT("Nocturne.DungeonCrawler"), 1) != 0 ? NOCTURNE_WALLET_MAX : vanillaCapacity;
+}
+
 extern "C" int Nocturne_AdultTimelineOn(void) {
     return AdultTimelineOn() ? 1 : 0;
 }

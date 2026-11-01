@@ -12,6 +12,10 @@ void Nocturne_BeforePlayInit(void);
 // rather than the Temple of Time.
 int Nocturne_AdultTimelineOn(void);
 
+// The wallet: no vanilla 99/200/500 limit while the mod is on (9999, shown with four digits).
+#define NOCTURNE_WALLET_MAX 9999
+int Nocturne_WalletCapacity(int vanillaCapacity);
+
 #ifdef __cplusplus
 }
 #endif
