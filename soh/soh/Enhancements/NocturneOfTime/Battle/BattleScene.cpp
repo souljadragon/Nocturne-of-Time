@@ -387,6 +387,15 @@ void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies
         sScene.enemyActors.push_back(a);
     }
 
+    // Tilt the view down onto the row (as the Famicom games frame their foes): aim a little above the
+    // enemies' feet, so ground enemies stand clear of the bottom edge and fliers stay in the top half.
+    // Adult Link looks from higher up, so this matters most for him. Exploring levels it again afterwards.
+    if (!boss) {
+        f32 eyeH = LINK_IS_ADULT ? 58.0f : 40.0f;
+        f32 aimH = 22.0f;
+        DungeonCrawler_SetPitch(Math_Atan2S(dist, aimH - eyeH));
+    }
+
     // Battle stats include equipment
     std::vector<Combatant> party;
     for (const PartyMember& m : Party_Members()) {
