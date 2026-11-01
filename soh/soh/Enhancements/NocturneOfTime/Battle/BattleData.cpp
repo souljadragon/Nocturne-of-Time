@@ -151,28 +151,19 @@ Combatant MakeSaria(int level) {
     c.skills = {
         Describe(Attack(Element::Strike, 8), "A swing of Saria's staff."),
         Describe(Make("Gale", Element::Wind, TargetType::OneEnemy, 14, 4), "A blade of wind strikes one foe."),
-        Describe(Make("Forest Gust", Element::Wind, TargetType::AllEnemies, 9, 8),
-                 "A forest wind that sweeps over every foe."),
         Describe(Make("Song of Healing", Element::Almighty, TargetType::OneAlly, 40, 5, 0, 1.0f, true),
                  "A gentle tune that restores one ally's HP."),
-        Describe(Make("Minuet", Element::Almighty, TargetType::AllAllies, 25, 10, 0, 1.0f, true),
-                 "The Minuet of Forest restores the whole party's HP."),
+        // Core skills by level; the rest is bought in her skill tree (Battle/SkillTree.cpp)
         Describe(Stages("Nayru's Blessing", TargetType::AllAllies, 0, 1, 0, 4, 3),
                  "Nayru's calm wards the party: defense rises."),
         Describe(Stages("Mire Hex", TargetType::AllEnemies, 0, 0, -1, 4, 5),
                  "Roots and bog slow every foe: their agility falls."),
-        Describe(Stages("Farore's Blessing", TargetType::AllAllies, 0, 0, 1, 4, 6),
-                 "Farore's wind at the party's heels: agility rises."),
-        Describe(Stages("Withering Hex", TargetType::AllEnemies, -1, 0, 0, 4, 8),
-                 "Saps the strength from every foe: their attack falls."),
         Describe([] {
                      Skill d = Stages("Cleansing Lullaby", TargetType::AllAllies, 0, 0, 0, 6, 9);
                      d.dispelDebuffs = true;
                      return d;
                  }(),
                  "Zelda's Lullaby, softly: lifts every hex from the party."),
-        Describe(Stages("Brittle Hex", TargetType::AllEnemies, 0, -1, 0, 4, 10),
-                 "Rot creeps into every foe's hide: their defense falls."),
     };
     GrowTo(c, level);
     return c;

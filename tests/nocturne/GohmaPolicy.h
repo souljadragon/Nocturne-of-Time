@@ -4,6 +4,7 @@
 #pragma once
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Relics/Relics.h"
+#include "../../soh/soh/Enhancements/NocturneOfTime/Battle/SkillTree.h"
 #include <cstdio>
 #include <random>
 
@@ -18,6 +19,19 @@ inline Combatant Known(Combatant c) {
         }
     }
     c.skills = k;
+    if (c.name == "Saria") {
+        // A typical spend by the gate: Minuet and Healing Boost, Forest Gust and Wind Boost
+        const SkillTree& tree = *TreeFor("Saria");
+        for (const char* id : { "minuet", "forest_gust" }) {
+            if (c.level >= 5) {
+                c.skills.push_back(TreeNodeById(tree, id)->skill);
+            }
+        }
+        if (c.level >= 5) {
+            c.healBonus += 0.15f;
+            c.elementBoost[(size_t)Element::Wind] += 0.2f;
+        }
+    }
     if (c.name == "Link") {
         // By the gate: the Slingshot mastered, and the Kokiri Ocarina worn to mastery 2
         for (const RelicSkill& rs : RelicOf(RelicId::FairySlingshot).skills) {

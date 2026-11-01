@@ -495,6 +495,11 @@ void Battle::ApplySupport(const Combatant& user, bool userIsEnemy, int userIndex
             say(c.name + "'s " + what + (by > 0 ? " rises!" : " falls!"), by > 0 ? kUp : kDown);
         }
     };
+    if (skill.curesAilments && c.ailment != Ailment::None) {
+        say(c.name + " is cured of " + std::string(AilmentName(c.ailment)) + "!", kUp);
+        c.ailment = Ailment::None;
+        c.ailmentTurns = 0;
+    }
     shift(c.atkStage, skill.buffAtk, "attack");
     shift(c.defStage, skill.buffDef, "defense");
     shift(c.agiStage, skill.buffAgi, "agility");
@@ -515,10 +520,23 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
 
     if (skill.heal) {
         if (!def.Alive()) {
-            return Outcome::Normal;
+            if (skill.revive <= 0.0f) {
+                return Outcome::Normal;
+            }
+            def.hp = std::max(1, (int)std::lround(def.maxHp * skill.revive));
+            def.ailment = Ailment::None;
+            def.ailmentTurns = 0;
+            def.stunTurns = 0;
+            BattleEvent r = Ev(BattleEvent::Type::Heal, userIsEnemy, userIndex, targetIsEnemy, target, def.hp,
+                               def.name + " is revived!");
+            out.push_back(r);
+            if (!skill.fullHeal) {
+                return Outcome::Normal;
+            }
         }
         int before = def.hp;
-        int amount = (int)std::lround((skill.power + user.magicPower) * (1.0f + user.healBonus));
+        int amount = skill.fullHeal ? def.maxHp
+                                    : (int)std::lround((skill.power + user.magicPower) * (1.0f + user.healBonus));
         def.hp = std::min(def.maxHp, def.hp + amount);
         out.push_back(Ev(BattleEvent::Type::Heal, userIsEnemy, userIndex, targetIsEnemy, target, def.hp - before,
                          def.name + " recovers " + std::to_string(def.hp - before) + " HP"));
@@ -535,7 +553,7 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
     if (def.guarding && aff == Affinity::Weak) {
         aff = Affinity::Normal; // guarding covers a weakness
     }
-    if (user.ignoreResist && aff == Affinity::Resist) {
+    if ((user.ignoreResist || user.pierceElement[(size_t)skill.element]) && aff == Affinity::Resist) {
         aff = Affinity::Normal;
     }
 
@@ -602,6 +620,7 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
         mult *= 0.5f;
     }
     mult *= StageFactor(user.atkStage) / StageFactor(def.defStage);
+    mult *= 1.0f + user.elementBoost[(size_t)skill.element];
     if (user.charged) {
         mult *= kChargeMult; // spent by the caller once the whole skill has landed
     }
@@ -629,7 +648,7 @@ Battle::Outcome Battle::ApplySkill(Combatant& user, bool userIsEnemy, int userIn
             e.color = 0xF8B80000u;
             out.push_back(e);
         }
-    } else if (skill.inflict != Ailment::None && def.ailment == Ailment::None) {
+    } else if (skill.inflict != Ailment::None && def.ailment == Ailment::None && !def.ailmentWard) {
         float chance = std::clamp(skill.inflictChance + (user.lu - def.lu) * 0.01f, 0.05f, 0.9f);
         if (mRand() < chance) {
             def.ailment = skill.inflict;
@@ -655,10 +674,12 @@ std::vector<int> GatherTargets(const Skill& s, int userIndex, int chosen, const 
         targets.push_back(userIndex);
     } else if (s.target == TargetType::AllEnemies || s.target == TargetType::AllAllies) {
         for (int i = 0; i < (int)side.size(); i++) {
-            if (side[i].Alive()) {
+            if (side[i].Alive() || s.revive > 0.0f) {
                 targets.push_back(i);
             }
         }
+    } else if (s.revive > 0.0f && chosen >= 0 && chosen < (int)side.size()) {
+        targets.push_back(chosen); // revives may pick the fallen
     } else {
         // Retarget if the chosen one is already down (heals may only target the living)
         if (chosen < 0 || chosen >= (int)side.size() || !side[chosen].Alive()) {
@@ -719,6 +740,13 @@ Events Battle::UseSkill(int skill, int target) {
     }
     if (!s.IsSupport() && !s.heal) {
         user.charged = false;
+    }
+    // First Light: the member's first action of the battle costs half an icon
+    if (user.firstLight && !user.firstLightUsed) {
+        user.firstLightUsed = true;
+        if (worst == Outcome::Normal) {
+            worst = Outcome::WeakOrCrit;
+        }
     }
 
     SpendIcons(worst);

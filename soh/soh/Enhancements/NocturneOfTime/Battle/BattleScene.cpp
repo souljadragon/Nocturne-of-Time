@@ -801,6 +801,7 @@ void QueueRewards() {
             continue; // fallen allies earn nothing
         }
         m.xp += xpFor(m);
+        int levelBefore = m.base.level;
         while (m.xp >= XpForLevel(m.base.level + 1, m.base.name)) {
             LevelGains gains = LevelUp(m.base, [] { return Rand_ZeroOne() * 0.99999f; });
             if (!gains.leveled) {
@@ -830,6 +831,12 @@ void QueueRewards() {
             }
         }
         Party_RefreshSkills(m); // new skills join the active list while there's room
+        if (m.base.level > levelBefore && TreeFor(m.base.name) != nullptr && Party_SkillPointsLeft(m) > 0) {
+            int left = Party_SkillPointsLeft(m);
+            sScene.queue.push_back(HeldMessage(m.base.name + " has " + std::to_string(left) + " skill point" +
+                                                   (left == 1 ? "" : "s") + " to spend.\n(Party menu: Z, then Z)",
+                                               0x3CBCFC00u));
+        }
         Party_ClampToMax(m);
     }
 
@@ -1163,7 +1170,13 @@ std::vector<ConsumableId> OwnedItems() {
 
 // Choosing who gets a revival item: fallen allies are valid targets.
 bool TargetingFallen() {
-    return sScene.pendingSkill == kPendingItem && ConsumableOf(sScene.pendingItem).effect.revive > 0.0f;
+    if (sScene.pendingSkill == kPendingItem) {
+        return ConsumableOf(sScene.pendingItem).effect.revive > 0.0f;
+    }
+    const Battle& b = *sScene.battle;
+    const Combatant& user = b.Party()[std::clamp(b.ActivePartyMember(), 0, (int)b.Party().size() - 1)];
+    return sScene.pendingSkill > 0 && sScene.pendingSkill < (int)user.skills.size() &&
+           user.skills[sScene.pendingSkill].revive > 0.0f;
 }
 
 void StepTarget(int delta, bool enemies) {
@@ -1197,6 +1210,15 @@ void ChooseSkill(int skill) {
         case TargetType::OneAlly:
             sScene.pendingSkill = skill;
             sScene.targetCursor = b.ActivePartyMember();
+            if (s.revive > 0.0f) {
+                // revives start on the first fallen ally
+                for (int i = 0; i < (int)b.Party().size(); i++) {
+                    if (!b.Party()[i].Alive()) {
+                        sScene.targetCursor = i;
+                        break;
+                    }
+                }
+            }
             sScene.ui = Ui::TargetAlly;
             break;
         default:

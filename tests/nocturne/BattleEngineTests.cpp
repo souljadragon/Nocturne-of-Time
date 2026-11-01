@@ -1,11 +1,12 @@
 // Nocturne of Time: unit tests for the battle rules. Not part of the game build.
 // Build and run (from this folder):
-//   g++ -std=c++20 BattleEngineTests.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.cpp ../../soh/soh/Enhancements/NocturneOfTime/Relics/Relics.cpp -o battle_tests
+//   g++ -std=c++20 BattleEngineTests.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.cpp ../../soh/soh/Enhancements/NocturneOfTime/Relics/Relics.cpp ../../soh/soh/Enhancements/NocturneOfTime/Battle/SkillTree.cpp -o battle_tests
 //   ./battle_tests
 
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleData.h"
 #include "../../soh/soh/Enhancements/NocturneOfTime/Battle/BattleEngine.h"
 #include "GohmaPolicy.h"
+#include "../../soh/soh/Enhancements/NocturneOfTime/Battle/SkillTree.h"
 
 #include <cstdio>
 #include <deque>
@@ -180,7 +181,7 @@ static void TestHealing() {
     b.PartyMutable()[0].hp = 10;
     b.Pass(); // Link
     int mpBefore = b.Party()[1].mp;
-    Events ev = b.UseSkill(3, 0); // Song of Healing on Link
+    Events ev = b.UseSkill(2, 0); // Song of Healing on Link
     CHECK(HasEvent(ev, BattleEvent::Type::Heal));
     CHECK(b.Party()[0].hp == 50 || b.Party()[0].hp == 10 + 40);
     CHECK(b.Party()[1].mp == mpBefore - 5);
@@ -779,6 +780,84 @@ static void TestGohmaAi() {
     CHECK(furyNotLast == 0);                     // the telegraph always leaves the party a turn to answer
 }
 
+static void TestTreeEffects() {
+    std::printf("Revives, cures and passives\n");
+    Combatant saria = MakeSaria(20), link = MakeLink(20);
+    const SkillTree& tree = *TreeFor("Saria");
+    saria.skills.push_back(TreeNodeById(tree, "fairys_call")->skill);
+    saria.skills.push_back(TreeNodeById(tree, "renewal")->skill);
+    saria.skills.push_back(TreeNodeById(tree, "soothing")->skill);
+    Combatant dummy = MakeEnemy(EnemyKind::DekuBaba);
+    dummy.maxHp = dummy.hp = 5000;
+
+    // Fairy's Call revives a fallen ally at half HP
+    link.hp = 0;
+    Battle b({ saria, link }, { dummy }, Steady());
+    // Saria acts first only if Link is down: he is, so she's the active member
+    CHECK(b.ActivePartyMember() == 0);
+    b.UseSkill(FindSkill(saria, "Fairy's Call"), 1);
+    CHECK(b.Party()[1].Alive() && b.Party()[1].hp == (int)std::lround(b.Party()[1].maxHp * 0.5f));
+
+    // Minuet of Renewal: everyone up and full
+    Battle r({ saria, link }, { dummy }, Steady());
+    r.PartyMutable()[0].hp = 3;
+    r.UseSkill(FindSkill(saria, "Minuet of Renewal"), -1);
+    CHECK(r.Party()[0].hp == r.Party()[0].maxHp && r.Party()[1].hp == r.Party()[1].maxHp);
+
+    // Soothing Song cures the party
+    Combatant ill = MakeLink(20);
+    ill.ailment = Ailment::Poison;
+    Battle c({ saria, ill }, { dummy }, Steady());
+    c.UseSkill(FindSkill(saria, "Soothing Song"), -1);
+    CHECK(c.Party()[1].ailment == Ailment::None);
+
+    // Wind Boost and Piercing Wind
+    Combatant boosted = MakeSaria(20);
+    boosted.elementBoost[(size_t)Element::Wind] = 0.2f;
+    Combatant resists = MakeEnemy(EnemyKind::DekuBaba);
+    resists.maxHp = resists.hp = 5000;
+    resists.affinity[(size_t)Element::Wind] = Affinity::Resist;
+    auto galeDamage = [&](const Combatant& caster) {
+        Battle g({ caster, MakeLink(20) }, { resists }, Steady());
+        int before = g.Enemies()[0].hp;
+        g.UseSkill(1, 0); // Gale
+        return before - g.Enemies()[0].hp;
+    };
+    int plain = galeDamage(MakeSaria(20)), withBoost = galeDamage(boosted);
+    CHECK(withBoost > plain);
+    Combatant piercing = MakeSaria(20);
+    piercing.pierceElement[(size_t)Element::Wind] = true;
+    CHECK(galeDamage(piercing) >= plain * 2 - 1); // Resist no longer halves it
+
+    // Fairy Ward: no poison
+    Combatant warded = MakeSaria(20);
+    warded.ailmentWard = true;
+    Combatant spider = MakeEnemy(EnemyKind::Skulltula);
+    spider.skills = { spider.skills[2] }; // Venom Fang
+    spider.lu = 99;
+    int poisoned = 0;
+    for (int i = 0; i < 20; i++) {
+        Battle w({ MakeLink(20), warded }, { spider }, [] { return 0.01f; });
+        w.Guard();
+        w.Guard();
+        while (w.Phase() == BattlePhase::EnemyTurn) {
+            w.EnemyAct();
+        }
+        poisoned += w.Party()[1].ailment == Ailment::Poison ? 1 : 0;
+    }
+    CHECK(poisoned == 0);
+
+    // First Light: her first skill of the battle costs half an icon, once
+    Combatant quick = MakeSaria(20);
+    quick.firstLight = true;
+    Battle f({ quick, MakeLink(20) }, { dummy }, Steady());
+    f.UseSkill(FindSkill(quick, "Nayru's Blessing"), -1);
+    CHECK(f.Icons().solid == 1 && f.Icons().blinking == 1);
+    f.Guard(); // Link (a whole icon)
+    f.UseSkill(FindSkill(quick, "Nayru's Blessing"), -1); // second time: a whole icon (the blinking one)
+    CHECK(f.Phase() == BattlePhase::EnemyTurn);
+}
+
 // Gohma is the combat check: answering her moves is what wins (see tests/nocturne/GohmaPolicy.h)
 static void TestGohmaBalance() {
     std::printf("Gohma balance (simulated)\n");
@@ -825,6 +904,7 @@ int main() {
     TestStages();
     TestCharge();
     TestGohmaAi();
+    TestTreeEffects();
     TestGohmaBalance();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
     return sFailures == 0 ? 0 : 1;

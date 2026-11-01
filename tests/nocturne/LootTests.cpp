@@ -3,6 +3,7 @@
 //   N=../../soh/soh/Enhancements/NocturneOfTime
 //   g++ -std=c++20 LootTests.cpp $N/Loot/Loot.cpp $N/Party.cpp $N/Items/Consumables.cpp $N/Moon/Moon.cpp \
 //       $N/Save/NocturneSave.cpp $N/Battle/BattleEngine.cpp $N/Battle/BattleData.cpp $N/Relics/Relics.cpp \
+//       $N/Battle/SkillTree.cpp \
 //       -o loot_tests
 //   ./loot_tests
 
@@ -13,6 +14,7 @@
 #include "../../soh/soh/Enhancements/NocturneOfTime/Save/NocturneSave.h"
 
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <random>
@@ -474,7 +476,7 @@ static void TestLegendaryPowers() {
     hurt.hp = 10;
     hurt.ailment = Ailment::Poison;
     Battle h({ saria, hurt }, { MakeEnemy(EnemyKind::DekuBaba) }, [] { return 0.5f; });
-    h.UseSkill(3, 1); // Song of Healing on Link
+    h.UseSkill(2, 1); // Song of Healing on Link
     CHECK(h.Party()[1].ailment == Ailment::None && h.Party()[1].hp > 10);
 
     Item edge = legend(100);
@@ -564,6 +566,10 @@ static void TestRelicsAndSkills() {
     // Eight skills at most; taking one off keeps it off; the pool keeps everything
     saria.base.level = 20;
     Party_RefreshSkills(saria);
+    CHECK(Party_SkillPool(saria).size() == 5); // her core: Gale, Song of Healing, Nayru's, Mire Hex, Lullaby
+    for (const char* id : { "minuet", "forest_gust", "farore", "withering", "brittle" }) {
+        CHECK(Party_LearnNode(saria, id));
+    }
     CHECK((int)saria.activeSkills.size() == kMaxActiveSkills);
     CHECK(Party_SkillPool(saria).size() == 10);
     CHECK(!Party_ActivateSkill(saria, "Brittle Hex")); // full
@@ -594,6 +600,73 @@ static void TestRelicsAndSkills() {
     CHECK(InBattle(Party_Members()[0], "Slingshot"));
 }
 
+static void TestSkillTree() {
+    std::printf("Saria's skill tree\n");
+    Party_Reset();
+    Party_EnsureCreated(5);
+    PartyMember& saria = Party_Members()[1];
+    const SkillTree* tree = TreeFor("Saria");
+    CHECK(tree != nullptr && TreeFor("Link") == nullptr);
+    CHECK(tree->branches.size() == 3);
+    int total = 0;
+    for (const TreeNode& n : tree->nodes) {
+        total += n.cost;
+        CHECK(!n.description.empty());
+        CHECK(n.IsPassive() || n.skill.name == n.name);
+    }
+    CHECK(total == 52);
+
+    // Level 5: 4 points; tier 1 only
+    CHECK(Party_SkillPointsLeft(saria) == 4);
+    CHECK(Party_NodeBlocker(saria, *TreeNodeById(*tree, "gust_blade")) == "Level 8");
+    CHECK(Party_LearnNode(saria, "minuet"));
+    CHECK(!Party_LearnNode(saria, "minuet")); // once
+    CHECK(Party_SkillPointsLeft(saria) == 3);
+    CHECK(InBattle(saria, "Minuet"));
+
+    // Level 8: Gust Blade replaces Gale, in the same active slot
+    saria.base.level = 8;
+    Party_RefreshSkills(saria);
+    CHECK(Party_NodeBlocker(saria, *TreeNodeById(*tree, "gust_blade")) == "Needs tier 1");
+    CHECK(Party_LearnNode(saria, "wind_boost"));
+    int galeSlot = -1;
+    for (int i = 0; i < (int)saria.activeSkills.size(); i++) {
+        if (saria.activeSkills[i] == "Gale") {
+            galeSlot = i;
+        }
+    }
+    CHECK(galeSlot >= 0);
+    CHECK(Party_LearnNode(saria, "gust_blade"));
+    CHECK(saria.activeSkills[galeSlot] == "Gust Blade");
+    CHECK(!InPool(saria, "Gale") && InBattle(saria, "Gust Blade"));
+    // Passives change her numbers, not her skill list
+    Combatant eff = Party_Effective(saria);
+    CHECK(std::fabs(eff.elementBoost[(size_t)Element::Wind] - 0.2f) < 0.001f);
+    CHECK(!InPool(saria, "Wind Boost"));
+
+    // Points run out
+    CHECK(Party_SkillPointsLeft(saria) == 7 - 4);
+    saria.base.level = 16;
+    saria.bonusSkillPoints = 10;
+    CHECK(Party_NodeBlocker(saria, *TreeNodeById(*tree, "whirlwind")) == "Needs Forest Gust");
+    CHECK(Party_LearnNode(saria, "tempest"));
+    CHECK(saria.activeSkills[galeSlot] == "Tempest"); // Gale -> Gust Blade -> Tempest
+    CHECK(Party_NodeBlocker(saria, *TreeNodeById(*tree, "kokiri_gale")) == "Level 25");
+
+    // Saved and loaded
+    nlohmann::json saved = Save_Write();
+    std::vector<std::string> nodes = saria.treeNodes;
+    Save_Read(nlohmann::json::parse(saved.dump()));
+    CHECK(Party_Members()[1].treeNodes == nodes && Party_Members()[1].bonusSkillPoints == 10);
+    CHECK(InBattle(Party_Members()[1], "Tempest"));
+
+    // Reset: every point back, Gale back in her list
+    PartyMember& s2 = Party_Members()[1];
+    Party_ResetTree(s2);
+    CHECK(s2.treeNodes.empty() && Party_SkillPointsLeft(s2) == 15 + 10);
+    CHECK(InPool(s2, "Gale") && InBattle(s2, "Gale") && !InPool(s2, "Tempest") && !InPool(s2, "Minuet"));
+}
+
 int main() {
     TestRarityOdds();
     TestAffixCounts();
@@ -609,6 +682,7 @@ int main() {
     TestSave();
     TestLegendaryPowers();
     TestRelicsAndSkills();
+    TestSkillTree();
     std::printf("\n%d checks, %d failed\n", sChecks, sFailures);
 
     std::printf("\nSample drops (level 5):\n");

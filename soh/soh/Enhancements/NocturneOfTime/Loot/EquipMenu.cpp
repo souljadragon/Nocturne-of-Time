@@ -40,7 +40,7 @@ constexpr int kVisibleItems = 5; // equip choices shown at once (matches the sta
 
 // Members: pick a member (or the "Items" row below them). Slots/Items: equipment. Use/UseTarget: consumables.
 // Skills: a member's active skills and the pool to choose from (and Link's Relic). Relics: choosing Link's Relic.
-enum class Page { Closed, Members, Slots, Items, Use, UseTarget, Skills, Relics };
+enum class Page { Closed, Members, Slots, Items, Use, UseTarget, Skills, Relics, Tree };
 
 const char* kSlotLabels[(size_t)Slot::Count] = { "Weapon", "Armor", "Acc." };
 
@@ -65,6 +65,10 @@ struct Menu {
     int poolCursor = 0;
     int poolScroll = 0;
     int relicCursor = 0;
+    // Tree page
+    int treeBranch = 0;
+    int treeCursor = 0;
+    bool resetArmed = false; // Z once more resets the tree
 };
 
 Menu sMenu;
@@ -194,6 +198,14 @@ void UpdateSkillsPage(const Buttons& in) {
         PlaySfx(NA_SE_SY_CANCEL);
         return;
     }
+    if (in.z && TreeFor(m.base.name) != nullptr) {
+        sMenu.page = Page::Tree;
+        sMenu.treeCursor = 0;
+        sMenu.resetArmed = false;
+        sMenu.note.clear();
+        PlaySfx(NA_SE_SY_DECIDE);
+        return;
+    }
     if (in.left || in.right) {
         if (sMenu.skillCol != 0) {
             sMenu.skillCol = sMenu.skillCol == 1 ? 2 : 1;
@@ -263,6 +275,70 @@ void UpdateSkillsPage(const Buttons& in) {
         } else {
             sMenu.note = "Only 8 skills fit. Take one off first.";
             PlaySfx(NA_SE_SY_ERROR);
+        }
+    }
+}
+
+// Nodes of one branch, in tier order
+std::vector<const TreeNode*> BranchNodes(const SkillTree& tree, int branch) {
+    std::vector<const TreeNode*> out;
+    for (int tier = 1; tier <= kTreeTiers; tier++) {
+        for (const TreeNode& n : tree.nodes) {
+            if (n.branch == branch && n.tier == tier) {
+                out.push_back(&n);
+            }
+        }
+    }
+    return out;
+}
+
+void UpdateTreePage(const Buttons& in) {
+    std::vector<PartyMember>& members = Party_Members();
+    if (sMenu.member >= (int)members.size() || TreeFor(members[sMenu.member].base.name) == nullptr) {
+        sMenu.page = Page::Skills;
+        return;
+    }
+    PartyMember& m = members[sMenu.member];
+    const SkillTree& tree = *TreeFor(m.base.name);
+    std::vector<const TreeNode*> nodes = BranchNodes(tree, sMenu.treeBranch);
+    sMenu.treeCursor = std::clamp(sMenu.treeCursor, 0, std::max(0, (int)nodes.size() - 1));
+    if (!in.z && (in.up || in.down || in.left || in.right || in.a || in.b)) {
+        sMenu.resetArmed = false;
+    }
+    if (in.b) {
+        sMenu.page = Page::Skills;
+        sMenu.note.clear();
+        PlaySfx(NA_SE_SY_CANCEL);
+    } else if (in.left || in.right) {
+        Move(sMenu.treeBranch, (int)tree.branches.size(), in.left);
+        sMenu.treeCursor = 0;
+        sMenu.note.clear();
+    } else if (in.up || in.down) {
+        Move(sMenu.treeCursor, (int)nodes.size(), in.up);
+        sMenu.note.clear();
+    } else if (in.a && !nodes.empty()) {
+        const TreeNode& n = *nodes[sMenu.treeCursor];
+        std::string blocker = Party_NodeBlocker(m, n);
+        if (blocker.empty() && Party_LearnNode(m, n.id)) {
+            sMenu.note = "Saria learned " + n.name + "!";
+            if (m.base.name != "Saria") {
+                sMenu.note = m.base.name + " learned " + n.name + "!";
+            }
+            PlaySfx(NA_SE_SY_DECIDE);
+        } else {
+            sMenu.note = blocker == "Learned" ? "Already learned." : "Can't yet: " + blocker + ".";
+            PlaySfx(NA_SE_SY_ERROR);
+        }
+    } else if (in.z) {
+        if (!sMenu.resetArmed) {
+            sMenu.resetArmed = true;
+            sMenu.note = "Press Z again to unlearn the whole tree.";
+            PlaySfx(NA_SE_SY_CURSOR);
+        } else {
+            sMenu.resetArmed = false;
+            Party_ResetTree(m);
+            sMenu.note = "The tree is reset. Every point is back.";
+            PlaySfx(NA_SE_SY_CANCEL);
         }
     }
 }
@@ -381,6 +457,10 @@ void EquipMenu_Update(void* inputPtr) {
 
         case Page::Relics:
             UpdateRelicsPage(in);
+            break;
+
+        case Page::Tree:
+            UpdateTreePage(in);
             break;
 
         case Page::Members:
@@ -851,9 +931,10 @@ static void DrawSkillsView(PlayState* play) {
             p.Text(14, infoY + kLineH, Fit(rest, 37), Cream);
         }
     }
-    const char* hint = sMenu.skillCol == 0 ? "A:CHANGE RELIC  B:BACK"
-                       : sMenu.skillCol == 1 ? "A:TAKE OFF  ◀▶:LEARNED  B:BACK"
-                                             : "A:SET/TAKE OFF  ◀▶:ACTIVE  B:BACK";
+    bool tree = TreeFor(m.base.name) != nullptr;
+    std::string hint = sMenu.skillCol == 0 ? "A:CHANGE RELIC  B:BACK"
+                       : sMenu.skillCol == 1 ? (tree ? "A:OFF ◀▶:LEARNED B:BACK Z:TREE" : "A:TAKE OFF  ◀▶:LEARNED  B:BACK")
+                                             : (tree ? "A:SET/OFF ◀▶:ACTIVE B:BACK Z:TREE" : "A:SET/OFF  ◀▶:ACTIVE  B:BACK");
     p.Text(14, 228, hint, Grey);
     CLOSE_DISPS(play->state.gfxCtx);
 }
@@ -917,6 +998,103 @@ static void DrawRelicsView(PlayState* play) {
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// TREE: one branch at a time (◀▶), its nodes by tier, the highlighted one explained
+static void DrawTreeView(PlayState* play) {
+    using namespace Retro;
+    std::vector<PartyMember>& members = Party_Members();
+    const PartyMember& m = members[std::clamp(sMenu.member, 0, (int)members.size() - 1)];
+    const SkillTree* tree = TreeFor(m.base.name);
+    if (tree == nullptr) {
+        return;
+    }
+    std::vector<const TreeNode*> nodes = BranchNodes(*tree, sMenu.treeBranch);
+    int cursor = nodes.empty() ? 0 : std::clamp(sMenu.treeCursor, 0, (int)nodes.size() - 1);
+
+    OPEN_DISPS(play->state.gfxCtx);
+    Painter p(&OVERLAY_DISP);
+    p.FillScreen(Black);
+    DrawTabs(p, sMenu.member);
+    p.Text(14, 20, "✻" + Upper(m.base.name) + "✻ SKILL TREE", White);
+    char pts[24];
+    snprintf(pts, sizeof(pts), "POINTS %d", Party_SkillPointsLeft(m));
+    p.TextRight(SCREEN_WIDTH - 14, 20, pts, Yellow);
+
+    // Branch header
+    std::string branch = Upper(tree->branches[sMenu.treeBranch]);
+    p.Window(10, 32, SCREEN_WIDTH - 20, 18);
+    p.Text(16, 37, "◀", Yellow);
+    p.TextCenter(SCREEN_WIDTH / 2, 37, branch, Green);
+    p.Text(SCREEN_WIDTH - 24, 37, "▶", Yellow);
+
+    // Nodes
+    const int rowH = 13;
+    int y = 56;
+    int lastTier = 0;
+    for (int i = 0; i < (int)nodes.size(); i++) {
+        const TreeNode& n = *nodes[i];
+        bool sel = i == cursor;
+        bool learned = Party_HasNode(m, n.id);
+        std::string blocker = Party_NodeBlocker(m, n);
+        if (n.tier != lastTier) {
+            lastTier = n.tier;
+            p.Text(14, y, n.tier == kTreeTiers ? "CAP" : "T" + std::to_string(n.tier), GreenDark);
+        }
+        if (sel) {
+            p.Text(42, y, "▶", Yellow);
+        }
+        Color c = sel ? Yellow : (learned ? White : (blocker.empty() ? White : Grey));
+        p.Text(52, y, (learned ? "✻" : " ") + Fit(n.name, 22), c);
+        std::string right;
+        Color rc = Grey;
+        if (learned) {
+            right = n.IsPassive() ? "PASSIVE" : "LEARNED";
+            rc = Green;
+        } else if (blocker.empty()) {
+            right = std::to_string(n.cost) + "PT";
+            rc = Yellow;
+        } else if (blocker.rfind("Level", 0) == 0) {
+            right = "LV" + std::to_string(TierLevel(n.tier)) + " " + std::to_string(n.cost) + "PT";
+        } else {
+            right = std::to_string(n.cost) + "PT";
+        }
+        p.TextRight(SCREEN_WIDTH - 14, y, right, rc);
+        y += rowH;
+    }
+
+    // The highlighted node
+    p.Rect(10, 150, SCREEN_WIDTH - 20, 2, White);
+    if (!nodes.empty()) {
+        const TreeNode& n = *nodes[cursor];
+        std::string kind = n.IsPassive() ? "PASSIVE" : (!n.replaces.empty() ? "UPGRADES " + Upper(n.replaces) : "SKILL");
+        p.Text(14, 156, Fit(kind, 36), Green);
+        int dy = 168;
+        for (const std::string& l : Wrap(n.description, 37)) {
+            if (dy > 190) {
+                break;
+            }
+            p.Text(14, dy, l, Cream);
+            dy += kLineH;
+        }
+        if (!n.IsPassive()) {
+            const Skill& sk = n.skill;
+            std::string stats = sk.mpCost > 0 ? std::to_string(sk.mpCost) + " MP" : "";
+            if (sk.power > 0) {
+                stats += std::string(stats.empty() ? "" : "  ") + (sk.heal ? "HEALS " : "POWER ") + std::to_string(sk.power);
+            }
+            p.Text(14, 200, stats, White);
+        }
+        std::string blocker = Party_NodeBlocker(m, n);
+        if (!blocker.empty() && blocker != "Learned") {
+            p.TextRight(SCREEN_WIDTH - 14, 200, Upper(blocker), Red);
+        }
+    }
+    if (!sMenu.note.empty()) {
+        p.Text(14, 212, Fit(sMenu.note, 37), sMenu.resetArmed ? Red : Yellow);
+    }
+    p.Text(14, 228, "◀▶:BRANCH A:LEARN Z:RESET B:BACK", Grey);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 void EquipMenu_Draw(PlayState* play) {
     using namespace Retro;
     if (sMenu.page == Page::Closed) {
@@ -936,6 +1114,10 @@ void EquipMenu_Draw(PlayState* play) {
     }
     if (sMenu.page == Page::Relics) {
         DrawRelicsView(play);
+        return;
+    }
+    if (sMenu.page == Page::Tree) {
+        DrawTreeView(play);
         return;
     }
     sMenu.member = std::clamp(sMenu.member, 0, (int)members.size() - 1);

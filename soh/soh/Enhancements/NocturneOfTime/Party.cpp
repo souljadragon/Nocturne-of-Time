@@ -118,6 +118,22 @@ std::vector<PoolSkill> Party_SkillPool(const PartyMember& member) {
             pool.push_back({ c.skills[i], false, true });
         }
     }
+    if (const SkillTree* tree = TreeFor(c.name)) {
+        // Bought actives and upgrades; an upgrade takes the place of the skill it upgrades
+        for (const TreeNode& n : tree->nodes) {
+            if (n.IsPassive() || !Party_HasNode(member, n.id)) {
+                continue;
+            }
+            pool.push_back({ n.skill, false, true });
+        }
+        for (const TreeNode& n : tree->nodes) {
+            if (!n.replaces.empty() && Party_HasNode(member, n.id)) {
+                pool.erase(std::remove_if(pool.begin(), pool.end(),
+                                          [&](const PoolSkill& p) { return p.skill.name == n.replaces; }),
+                           pool.end());
+            }
+        }
+    }
     if (c.name == "Link") {
         for (int r = 0; r < (int)RelicId::Count; r++) {
             const RelicState& st = sRelics[r];
@@ -163,6 +179,22 @@ void Party_RefreshSkills(PartyMember& m) {
         }
         return false;
     };
+    // An upgrade takes its old skill's slot (Gale -> Gust Blade -> Tempest)
+    if (const SkillTree* tree = TreeFor(m.base.name)) {
+        for (int pass = 0; pass < 4; pass++) {
+            for (const TreeNode& n : tree->nodes) {
+                if (n.replaces.empty() || !Party_HasNode(m, n.id)) {
+                    continue;
+                }
+                for (std::string& a : m.activeSkills) {
+                    if (a == n.replaces && !Party_IsActive(m, n.skill.name)) {
+                        a = n.skill.name;
+                        m.seenSkills.push_back(n.skill.name);
+                    }
+                }
+            }
+        }
+    }
     // Drop what's no longer available (an unmastered skill whose Relic came off). It's offered again when it
     // comes back, so wearing the Relic again brings it straight back into the list.
     m.activeSkills.erase(std::remove_if(m.activeSkills.begin(), m.activeSkills.end(),
@@ -205,6 +237,73 @@ bool Party_ActivateSkill(PartyMember& m, const std::string& name) {
 
 void Party_DeactivateSkill(PartyMember& m, const std::string& name) {
     m.activeSkills.erase(std::remove(m.activeSkills.begin(), m.activeSkills.end(), name), m.activeSkills.end());
+}
+
+int Party_SkillPointsTotal(const PartyMember& m) {
+    return TreePointsForLevel(m.base.level) + m.bonusSkillPoints;
+}
+
+int Party_SkillPointsLeft(const PartyMember& m) {
+    int spent = 0;
+    if (const SkillTree* tree = TreeFor(m.base.name)) {
+        for (const std::string& id : m.treeNodes) {
+            if (const TreeNode* n = TreeNodeById(*tree, id)) {
+                spent += n->cost;
+            }
+        }
+    }
+    return Party_SkillPointsTotal(m) - spent;
+}
+
+bool Party_HasNode(const PartyMember& m, const std::string& id) {
+    return std::find(m.treeNodes.begin(), m.treeNodes.end(), id) != m.treeNodes.end();
+}
+
+std::string Party_NodeBlocker(const PartyMember& m, const TreeNode& node) {
+    const SkillTree* tree = TreeFor(m.base.name);
+    if (tree == nullptr) {
+        return "No tree";
+    }
+    if (Party_HasNode(m, node.id)) {
+        return "Learned";
+    }
+    if (m.base.level < TierLevel(node.tier)) {
+        return "Level " + std::to_string(TierLevel(node.tier));
+    }
+    if (!node.needs.empty() && !Party_HasNode(m, node.needs)) {
+        const TreeNode* need = TreeNodeById(*tree, node.needs);
+        return "Needs " + (need ? need->name : node.needs);
+    }
+    if (node.tier > 1) {
+        bool below = false;
+        for (const TreeNode& n : tree->nodes) {
+            below = below || (n.branch == node.branch && n.tier == node.tier - 1 && Party_HasNode(m, n.id));
+        }
+        if (!below) {
+            return "Needs tier " + std::to_string(node.tier - 1);
+        }
+    }
+    if (Party_SkillPointsLeft(m) < node.cost) {
+        return std::to_string(node.cost) + (node.cost == 1 ? " point" : " points");
+    }
+    return "";
+}
+
+bool Party_LearnNode(PartyMember& m, const std::string& id) {
+    const SkillTree* tree = TreeFor(m.base.name);
+    const TreeNode* node = tree ? TreeNodeById(*tree, id) : nullptr;
+    if (node == nullptr || !Party_NodeBlocker(m, *node).empty()) {
+        return false;
+    }
+    m.treeNodes.push_back(id);
+    Party_RefreshSkills(m);
+    Party_ClampToMax(m);
+    return true;
+}
+
+void Party_ResetTree(PartyMember& m) {
+    m.treeNodes.clear();
+    Party_RefreshSkills(m);
 }
 
 std::array<RelicState, (size_t)RelicId::Count>& Party_Relics() {
@@ -292,6 +391,33 @@ Combatant Party_Effective(const PartyMember& member) {
         }
     }
     c.skills = known;
+    // Skill tree passives
+    if (const SkillTree* tree = TreeFor(c.name)) {
+        for (const TreeNode& n : tree->nodes) {
+            if (!n.IsPassive() || !Party_HasNode(member, n.id)) {
+                continue;
+            }
+            switch (n.passive) {
+                case PassiveKind::HealBoost:
+                    c.healBonus += 0.15f;
+                    break;
+                case PassiveKind::WindBoost:
+                    c.elementBoost[(size_t)Element::Wind] += 0.2f;
+                    break;
+                case PassiveKind::PierceWind:
+                    c.pierceElement[(size_t)Element::Wind] = true;
+                    break;
+                case PassiveKind::AilmentWard:
+                    c.ailmentWard = true;
+                    break;
+                case PassiveKind::FirstLight:
+                    c.firstLight = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
     // The equipped Relic sets Link's affinities (gear resists apply on top)
     if (c.name == "Link" && sEquippedRelic >= 0) {
         for (const auto& [element, affinity] : RelicOf((RelicId)sEquippedRelic).affinities) {

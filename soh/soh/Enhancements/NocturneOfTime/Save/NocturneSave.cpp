@@ -62,7 +62,8 @@ json MemberToJson(const PartyMember& m) {
              { "maxMp", c.maxMp }, { "mp", c.mp },       { "st", c.st },       { "ma", c.ma },
              { "vi", c.vi },       { "ag", c.ag },       { "lu", c.lu },       { "ailment", (int)c.ailment },
              { "xp", m.xp },       { "points", m.unspentStatPoints },          { "gear", gear },
-             { "active", m.activeSkills }, { "seen", m.seenSkills } };
+             { "active", m.activeSkills }, { "seen", m.seenSkills },
+             { "tree", m.treeNodes },      { "bonusSP", m.bonusSkillPoints } };
 }
 
 bool MemberFromJson(const json& j, PartyMember& m) {
@@ -98,6 +99,8 @@ bool MemberFromJson(const json& j, PartyMember& m) {
     };
     names("active", m.activeSkills);
     names("seen", m.seenSkills);
+    names("tree", m.treeNodes);
+    m.bonusSkillPoints = std::max(0, j.value("bonusSP", 0));
     if (j.contains("gear") && j["gear"].is_array()) {
         for (size_t i = 0; i < m.gear.size() && i < j["gear"].size(); i++) {
             const json& g = j["gear"][i];

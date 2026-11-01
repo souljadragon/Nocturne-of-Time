@@ -68,6 +68,9 @@ struct Skill {
     bool charge = false;        // the user's next damaging skill deals kChargeMult times the damage (Focus)
     std::string useText;        // announcement instead of "X uses Y!" (e.g. a boss's telegraph)
     int learnLevel = 1;         // party members know the skill from this level on
+    float revive = 0.0f;        // heals: also revives a fallen target with this fraction of max HP
+    bool fullHeal = false;      // heals: restores every HP
+    bool curesAilments = false; // support: cures poison and burns on its targets
 
     bool IsSupport() const {
         return !heal && power == 0;
@@ -113,6 +116,12 @@ struct Combatant {
     float healBonus = 0.0f; // heals restore (1 + healBonus) times their power
     bool ignoreResist = false; // Biggoron's Edge: Resist counts as a normal hit
     bool healCures = false;    // Fairy Ocarina of the Lost Woods: heals also cure ailments
+    // Passives (skill trees)
+    std::array<float, (size_t)Element::Count> elementBoost{};    // +x damage with skills of that element
+    std::array<bool, (size_t)Element::Count> pierceElement{};    // that element treats Resist as a normal hit
+    bool ailmentWard = false;  // can't be poisoned or burned
+    bool firstLight = false;   // the first action of a battle costs half an icon
+    bool firstLightUsed = false;
 
     int xpReward = 0;
     int rupeeMin = 0, rupeeMax = 0;

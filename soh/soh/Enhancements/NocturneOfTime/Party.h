@@ -7,6 +7,7 @@
 #include "Loot/Loot.h"
 #include "Items/Consumables.h"
 #include "Relics/Relics.h"
+#include "Battle/SkillTree.h"
 
 #include <array>
 #include <optional>
@@ -25,6 +26,9 @@ struct PartyMember {
     // the player took off stays off.
     std::vector<std::string> activeSkills;
     std::vector<std::string> seenSkills;
+    // Skill tree (companions): nodes learned (ids) and points from bounties etc. on top of the level's
+    std::vector<std::string> treeNodes;
+    int bonusSkillPoints = 0;
 };
 
 // As many skills as SMT III lets the Demi-Fiend and each demon carry
@@ -47,6 +51,17 @@ void Party_RefreshAllSkills();
 bool Party_ActivateSkill(PartyMember& member, const std::string& name);
 void Party_DeactivateSkill(PartyMember& member, const std::string& name);
 bool Party_IsActive(const PartyMember& member, const std::string& name);
+
+// ---- Skill trees (companions) ----
+int Party_SkillPointsTotal(const PartyMember& member);
+int Party_SkillPointsLeft(const PartyMember& member);
+bool Party_HasNode(const PartyMember& member, const std::string& id);
+// Why a node can't be learned now ("" if it can): "Learned", "Level 8", "Needs Gust Blade", "Needs tier 1",
+// "2 points"
+std::string Party_NodeBlocker(const PartyMember& member, const TreeNode& node);
+bool Party_LearnNode(PartyMember& member, const std::string& id);
+// Unlearn the whole tree and get every point back (free while testing; the Great Fairy later)
+void Party_ResetTree(PartyMember& member);
 
 // ---- Relics (Link's) ----
 struct RelicState {
