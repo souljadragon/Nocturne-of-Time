@@ -18,10 +18,10 @@ static int sFail = 0, sChecks = 0;
     } while (0)
 
 int main() {
-    const int sizes[3] = { 17, 21, 17 };
+    const int widths[3] = { 17, 21, 17 }, heights[3] = { 18, 21, 17 };
     for (int f = 0; f < kHuskFloors; f++) {
         const HuskFloor& fl = HuskFloorOf(f);
-        CHECK(fl.Width() == sizes[f] && fl.Height() == sizes[f]);
+        CHECK(fl.Width() == widths[f] && fl.Height() == heights[f]);
         for (const std::string& r : fl.rows) {
             CHECK((int)r.size() == fl.Width());
             CHECK(r.front() == '#' && r.back() == '#');
@@ -64,10 +64,12 @@ int main() {
         }
     }
     HuskSpot to;
-    CHECK(HuskLink(0, 8, 8, to) && to.floor == 1 && to.x == 10 && to.y == 10); // F1 hole -> F2 vines
-    CHECK(HuskLink(1, 10, 10, to) && to.floor == 0 && to.x == 8 && to.y == 8);
+    CHECK(HuskLink(0, 8, 8, to) && to.floor == 1 && to.x == 10 && to.y == 10); // F1 Great Web shaft -> F2 vines
+    CHECK(HuskLink(1, 10, 10, to) && to.floor == 0 && to.x == 7 && to.y == 10); // ...and back to the walkway
+    CHECK(HuskTile(0, 7, 10) == '.');
+    CHECK(HuskSpaceAt(0, 8, 8) == HuskSpace::Hall && HuskSpaceAt(0, 8, 14) == HuskSpace::Corridor);
     CHECK(HuskLink(1, 19, 1, to) && to.floor == 2 && to.x == 8 && to.y == 1);
-    CHECK(HuskLink(0, 12, 2, to) && to.floor == 1 && to.x == 2 && to.y == 10); // F1 pit -> F2 den
+    CHECK(HuskLink(0, 12, 1, to) && to.floor == 1 && to.x == 2 && to.y == 10); // F1 pit -> F2 den
     CHECK(HuskLink(1, 13, 2, to) && to.floor == 2 && to.x == 11 && to.y == 10);
     CHECK(HuskTile(0, 15, 8) == 'C'); // the Kokiri Ocarina's chest
     std::printf("%d checks, %d failed\n", sChecks, sFail);

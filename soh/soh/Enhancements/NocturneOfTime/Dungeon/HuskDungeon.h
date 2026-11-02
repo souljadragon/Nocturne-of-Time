@@ -28,6 +28,8 @@ struct Player;
 // The grid floors are in use (the mod is on and this is the Deku Tree)
 bool Husk_Active(PlayState* play);
 int Husk_Floor();
+// World units per grid tile (the automap's cells and the crawler's step follow it)
+float Husk_TileSize();
 // Every frame the crawler runs here. True while Link is being placed on a floor (the crawler leaves him alone).
 bool Husk_Frame(PlayState* play, Player* player);
 // A step from `from` in crawler direction `facing` (0 +Z south, 1 +X east, 2 -Z north, 3 -X west). False if the

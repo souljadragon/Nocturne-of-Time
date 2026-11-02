@@ -7,6 +7,7 @@
 #include "HuskDungeon.h"
 #include "HuskFloors.h"
 #include "HuskTextures.h"
+#include "align_asset_macro.h"
 #include "../Party.h"
 #include "../DungeonCrawler.h"
 #include "../Battle/BattleScene.h"
@@ -37,19 +38,35 @@ using namespace Nocturne;
 namespace {
 
 // ---- Where the floors are built -------------------------------------------------------------------------
-// Far from the vanilla tree (outside its collision box), on the automap's 80-unit tiles; each floor at its own
-// height so the automap keeps them apart.
-constexpr f32 kTile = 80.0f;
-constexpr f32 kHalf = 40.0f;
-constexpr f32 kWallH = 120.0f;
-constexpr f32 kOriginX = 6000.0f, kOriginZ = 6000.0f;
+// Far from the vanilla tree (outside its collision box); each floor at its own height so the automap keeps them
+// apart. Since the Etrian-style rebuild a tile is 160 units (twice the old one): corridors wide enough for a party
+// and its foes, with high roofs, rooms higher still and halls whose roof is lost in the dark.
+constexpr f32 kTile = 160.0f;
+constexpr f32 kHalf = 80.0f;
+constexpr f32 kWallH = 280.0f;  // a corridor's roof
+constexpr f32 kRoomH = 400.0f;  // a room's
+constexpr f32 kHallH = 760.0f;  // a great hall's
+constexpr f32 kShaftDepth = 600.0f; // the Great Web's shaft, down to the floor below
+constexpr f32 kOriginX = 6400.0f, kOriginZ = 6400.0f; // multiples of kTile, so the automap's cells line up
 constexpr f32 kTopY = 3000.0f, kFloorStep = 600.0f;
 constexpr int kStickSteps = 12;
+constexpr int kLayoutVersion = 2; // 2: F1 rebuilt as the Great Hollow (Nov 1)
 constexpr int kMessageFrames = 90; // 4.5 seconds
-constexpr int kDrawRadius = 7;     // tiles drawn around the camera
+constexpr int kDrawRadius = 8;     // tiles drawn around the camera
 
 f32 FloorY(int floor) {
     return kTopY - kFloorStep * floor;
+}
+
+f32 RoofOf(int f, int x, int y) {
+    switch (HuskSpaceAt(f, x, y)) {
+        case HuskSpace::Hall:
+            return kHallH;
+        case HuskSpace::Room:
+            return kRoomH;
+        default:
+            return kWallH;
+    }
 }
 
 bool ModOn() {
@@ -111,7 +128,7 @@ bool Solid(int f, int x, int y) {
     if (HuskTileSolid(t)) {
         return true;
     }
-    if (t == 'W') {
+    if (t == 'W' || t == 'w') {
         return !Has(sState.webs, f, x, y);
     }
     if (t == 'G') {
@@ -189,7 +206,7 @@ void BuildCollision(int f) {
     sCol.vtx.clear();
     sCol.polys.clear();
     const HuskFloor& fl = HuskFloorOf(f);
-    f32 y0 = FloorY(f), y1 = y0 + kWallH;
+    f32 y0 = FloorY(f), y1 = y0 + kHallH;
     auto walk = [&](int x, int y) { return !Solid(f, x, y); };
     // Floor: one quad under the whole grid
     {
@@ -258,17 +275,52 @@ void BuildCollision(int f) {
 }
 
 // ---- Drawing --------------------------------------------------------------------------------------------
+// The Deku Tree's own textures, read from the game's assets at runtime (nothing is copied into the mod): its
+// trunk bark, mossy floors, hanging roots, root lattices, the great web and ivy. Ids from kVanBase up; the Husk's
+// own textures (props: chests, flames, stones...) keep their HuskTex ids below it.
+constexpr int kVanBase = 100;
+namespace Van {
+enum : int { Bark = kVanBase, BarkPale, Moss, Roof, RoofDark, Roots, Lattice, GreatWeb, Ivy, Stone, End };
+static const ALIGN_ASSET(2) char kTlut[] = "__OTR__scenes/nonmq/ydan_scene/ydan_sceneTLUT_00B810";
+static const ALIGN_ASSET(2) char kBark[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_0109C0";
+static const ALIGN_ASSET(2) char kBarkPale[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_00CDC0";
+static const ALIGN_ASSET(2) char kMoss[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_00B5C0";
+static const ALIGN_ASSET(2) char kRoof[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_00E1C0";
+static const ALIGN_ASSET(2) char kRoofDark[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_00E9C0";
+static const ALIGN_ASSET(2) char kRoots[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_0071C0";
+static const ALIGN_ASSET(2) char kLattice[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_012F48";
+static const ALIGN_ASSET(2) char kWeb[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_0Tex_014348";
+static const ALIGN_ASSET(2) char kIvy[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_11Tex_0044D8";
+static const ALIGN_ASSET(2) char kStone[] = "__OTR__scenes/nonmq/ydan_scene/ydan_room_3Tex_00A8C0";
+struct Info {
+    const char* path;
+    u8 fmt, siz;
+    int w, h, maskS, maskT;
+};
+const Info kInfo[End - kVanBase] = {
+    { kBark, G_IM_FMT_CI, G_IM_SIZ_8b, 32, 64, 5, 6 },     { kBarkPale, G_IM_FMT_CI, G_IM_SIZ_8b, 32, 64, 5, 6 },
+    { kMoss, G_IM_FMT_CI, G_IM_SIZ_8b, 32, 64, 5, 6 },     { kRoof, G_IM_FMT_CI, G_IM_SIZ_8b, 32, 64, 5, 6 },
+    { kRoofDark, G_IM_FMT_CI, G_IM_SIZ_8b, 32, 64, 5, 6 }, { kRoots, G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 64, 5, 6 },
+    { kLattice, G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 64, 5, 6 }, { kWeb, G_IM_FMT_IA, G_IM_SIZ_16b, 32, 64, 5, 6 },
+    { kIvy, G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 64, 5, 6 },  { kStone, G_IM_FMT_CI, G_IM_SIZ_8b, 64, 32, 6, 5 },
+};
+} // namespace Van
+
 struct Quad {
     Vec3f p[4];
     f32 s[4], t[4];
     int tex;
     bool xlu;
+    bool clampT; // hanging roots: one strip, not repeated down the wall
+    f32 tint;    // light scale (the white web is toned down to sit in the dark)
 };
 std::vector<Quad> sQuads;
 Vec3f sEye;
 s16 sEyeYaw;
+std::vector<Vec3f> sLights; // lit torches near the camera (and the burning stick)
 
-void Emit(const Vec3f& a, const Vec3f& b, const Vec3f& c, const Vec3f& d, int tex, f32 sMax, f32 tMax, bool xlu) {
+void Emit(const Vec3f& a, const Vec3f& b, const Vec3f& c, const Vec3f& d, int tex, f32 sMax, f32 tMax, bool xlu,
+          bool clampT = false) {
     Quad q;
     q.p[0] = a;
     q.p[1] = b;
@@ -284,11 +336,13 @@ void Emit(const Vec3f& a, const Vec3f& b, const Vec3f& c, const Vec3f& d, int te
     q.t[3] = 0;
     q.tex = tex;
     q.xlu = xlu;
+    q.clampT = clampT;
+    q.tint = 1.0f;
     sQuads.push_back(q);
 }
 
 // A flat quad on the floor of a tile (slightly raised so it doesn't fight the floor)
-void FloorDecal(int f, int x, int y, int tex, f32 size = kHalf, f32 lift = 0.6f) {
+void FloorDecal(int f, int x, int y, int tex, f32 size = kHalf * 0.6f, f32 lift = 0.6f) {
     Vec3f c = CentreOf(f, x, y);
     f32 h = c.y + lift;
     Emit({ c.x - size, h, c.z + size }, { c.x + size, h, c.z + size }, { c.x + size, h, c.z - size },
@@ -296,12 +350,12 @@ void FloorDecal(int f, int x, int y, int tex, f32 size = kHalf, f32 lift = 0.6f)
 }
 
 // Two upright quads crossing at the tile's centre (webs, the gate, vines)
-void Cross(int f, int x, int y, int tex, f32 h0, f32 h1, f32 half = kHalf) {
+void Cross(int f, int x, int y, int tex, f32 h0, f32 h1, f32 half = kHalf, f32 tRepeat = 1.0f) {
     Vec3f c = CentreOf(f, x, y);
     Emit({ c.x - half, c.y + h0, c.z }, { c.x + half, c.y + h0, c.z }, { c.x + half, c.y + h1, c.z },
-         { c.x - half, c.y + h1, c.z }, tex, 1, 1, true);
+         { c.x - half, c.y + h1, c.z }, tex, 1, tRepeat, true);
     Emit({ c.x, c.y + h0, c.z - half }, { c.x, c.y + h0, c.z + half }, { c.x, c.y + h1, c.z + half },
-         { c.x, c.y + h1, c.z - half }, tex, 1, 1, true);
+         { c.x, c.y + h1, c.z - half }, tex, 1, tRepeat, true);
 }
 
 // A quad that always faces the camera
@@ -330,11 +384,97 @@ bool TorchLit(int f, int x, int y) {
     return t == 'T' || (t == 't' && Has(sState.torches, f, x, y));
 }
 
+// A steady per-wall number, so dressing (lattices, ivy) doesn't flicker or shuffle as Link walks
+u32 WallHash(int f, int x, int y, int side) {
+    u32 h = (u32)(f * 73856093) ^ (u32)(x * 19349663) ^ (u32)(y * 83492791) ^ (u32)(side * 2654435761u);
+    h ^= h >> 13;
+    h *= 0x5bd1e995;
+    return h ^ (h >> 15);
+}
+
+// One wall face of a walkable tile, toward the wall block on `side` (0 south, 1 east, 2 north, 3 west), with its
+// dressing: bark up to the roof, a root lattice on some walls near the floor, ivy climbing some hall walls, and
+// roots hanging from the roof in corridors and rooms
+void WallFace(int f, int x, int y, int side, f32 y0, f32 roof) {
+    Vec3f c = CentreOf(f, x, y);
+    Vec3f a, b, n;
+    switch (side) {
+        case 0: a = { c.x - kHalf, 0, c.z + kHalf }; b = { c.x + kHalf, 0, c.z + kHalf }; n = { 0, 0, -1 }; break;
+        case 1: a = { c.x + kHalf, 0, c.z + kHalf }; b = { c.x + kHalf, 0, c.z - kHalf }; n = { -1, 0, 0 }; break;
+        case 2: a = { c.x + kHalf, 0, c.z - kHalf }; b = { c.x - kHalf, 0, c.z - kHalf }; n = { 0, 0, 1 }; break;
+        default: a = { c.x - kHalf, 0, c.z - kHalf }; b = { c.x - kHalf, 0, c.z + kHalf }; n = { 1, 0, 0 }; break;
+    }
+    f32 h = roof - y0;
+    HuskSpace space = HuskSpaceAt(f, x, y);
+    int bark = space == HuskSpace::Room ? Van::BarkPale : Van::Bark;
+    // bark: 32 texels across 40 units, 64 down 80 (about the vanilla tree's own density)
+    Emit({ a.x, y0, a.z }, { b.x, y0, b.z }, { b.x, roof, b.z }, { a.x, roof, a.z }, bark, 4.0f, h / 80.0f, false);
+    u32 hash = WallHash(f, x, y, side);
+    auto off = [&](const Vec3f& p, f32 d) { return Vec3f{ p.x + n.x * d, 0, p.z + n.z * d }; };
+    Vec3f a1 = off(a, 1.5f), b1 = off(b, 1.5f);
+    if ((hash & 3) == 0) {
+        // A root lattice grown over the lower wall
+        Emit({ a1.x, y0, a1.z }, { b1.x, y0, b1.z }, { b1.x, y0 + 160.0f, b1.z }, { a1.x, y0 + 160.0f, a1.z },
+             Van::Lattice, 4.0f, 2.0f, true);
+    }
+    if (space == HuskSpace::Hall) {
+        if ((hash >> 4) % 3 == 0) {
+            // Ivy climbing into the dark
+            Vec3f a2 = off(a, 2.5f), b2 = off(b, 2.5f);
+            Emit({ a2.x, y0, a2.z }, { b2.x, y0, b2.z }, { b2.x, y0 + 480.0f, b2.z }, { a2.x, y0 + 480.0f, a2.z },
+                 Van::Ivy, 2.0f, 6.0f, true);
+        }
+    } else {
+        // Roots hanging from the roof: one strip, their ragged ends showing
+        Vec3f a3 = off(a, 3.0f), b3 = off(b, 3.0f);
+        Emit({ a3.x, roof - 96.0f, a3.z }, { b3.x, roof - 96.0f, b3.z }, { b3.x, roof, b3.z }, { a3.x, roof, a3.z },
+             Van::Roots, 4.0f, 1.0f, true, true);
+    }
+}
+
+// The Great Web's shaft: no floor, bark walls dropping to the floor below, and (until burned) the web across it
+void ShaftTile(PlayState* play, int f, int x, int y) {
+    Vec3f c = CentreOf(f, x, y);
+    f32 y0 = c.y, yb = c.y - kShaftDepth;
+    auto open = [&](int nx, int ny) { return HuskTile(f, nx, ny) == 'w'; };
+    // Walls down the shaft where it meets the walkway (faces look into the shaft)
+    if (!open(x, y + 1)) {
+        Emit({ c.x + kHalf, yb, c.z + kHalf }, { c.x - kHalf, yb, c.z + kHalf }, { c.x - kHalf, y0, c.z + kHalf },
+             { c.x + kHalf, y0, c.z + kHalf }, Van::Bark, 4.0f, kShaftDepth / 80.0f, false);
+    }
+    if (!open(x, y - 1)) {
+        Emit({ c.x - kHalf, yb, c.z - kHalf }, { c.x + kHalf, yb, c.z - kHalf }, { c.x + kHalf, y0, c.z - kHalf },
+             { c.x - kHalf, y0, c.z - kHalf }, Van::Bark, 4.0f, kShaftDepth / 80.0f, false);
+    }
+    if (!open(x + 1, y)) {
+        Emit({ c.x + kHalf, yb, c.z - kHalf }, { c.x + kHalf, yb, c.z + kHalf }, { c.x + kHalf, y0, c.z + kHalf },
+             { c.x + kHalf, y0, c.z - kHalf }, Van::Bark, 4.0f, kShaftDepth / 80.0f, false);
+    }
+    if (!open(x - 1, y)) {
+        Emit({ c.x - kHalf, yb, c.z + kHalf }, { c.x - kHalf, yb, c.z - kHalf }, { c.x - kHalf, y0, c.z - kHalf },
+             { c.x - kHalf, y0, c.z + kHalf }, Van::Bark, 4.0f, kShaftDepth / 80.0f, false);
+    }
+    // The floor below, far down
+    Emit({ c.x - kHalf, yb, c.z + kHalf }, { c.x + kHalf, yb, c.z + kHalf }, { c.x + kHalf, yb, c.z - kHalf },
+         { c.x - kHalf, yb, c.z - kHalf }, Van::Moss, 4.0f, 2.0f, false);
+    if (!Has(sState.webs, f, x, y)) {
+        // The web, stretched just under the walkway's edge
+        f32 h = y0 - 6.0f;
+        Emit({ c.x - kHalf, h, c.z + kHalf }, { c.x + kHalf, h, c.z + kHalf }, { c.x + kHalf, h, c.z - kHalf },
+             { c.x - kHalf, h, c.z - kHalf }, Van::GreatWeb, 2.0f, 1.0f, true);
+        sQuads.back().tint = 0.6f;
+    }
+}
+
 void BuildQuads(PlayState* play) {
     sQuads.clear();
+    sLights.clear();
     int f = sFloor;
     int cx, cy;
     TileOf(sEye, cx, cy);
+    if (sStick > 0) {
+        sLights.push_back({ sEye.x, sEye.y + 20.0f, sEye.z }); // the burning stick, held up
+    }
     for (int y = cy - kDrawRadius; y <= cy + kDrawRadius; y++) {
         for (int x = cx - kDrawRadius; x <= cx + kDrawRadius; x++) {
             char t = HuskTile(f, x, y);
@@ -342,91 +482,101 @@ void BuildQuads(PlayState* play) {
                 continue;
             }
             Vec3f c = CentreOf(f, x, y);
-            f32 y0 = c.y, y1 = c.y + kWallH;
-            // Floor and ceiling under everything that isn't a wall block
-            Emit({ c.x - kHalf, y0, c.z + kHalf }, { c.x + kHalf, y0, c.z + kHalf }, { c.x + kHalf, y0, c.z - kHalf },
-                 { c.x - kHalf, y0, c.z - kHalf }, HuskTex::Floor, 1, 1, false);
-            Emit({ c.x - kHalf, y1, c.z - kHalf }, { c.x + kHalf, y1, c.z - kHalf }, { c.x + kHalf, y1, c.z + kHalf },
-                 { c.x - kHalf, y1, c.z + kHalf }, HuskTex::Ceiling, 1, 1, false);
-            // Walls toward neighbouring wall blocks
-            if (HuskTile(f, x, y - 1) == '#') {
-                Emit({ c.x + kHalf, y0, c.z - kHalf }, { c.x - kHalf, y0, c.z - kHalf },
-                     { c.x - kHalf, y1, c.z - kHalf }, { c.x + kHalf, y1, c.z - kHalf }, HuskTex::Wall, 1, 1.5f, false);
-            }
-            if (HuskTile(f, x, y + 1) == '#') {
+            f32 y0 = c.y, roof = y0 + RoofOf(f, x, y);
+            HuskSpace space = HuskSpaceAt(f, x, y);
+            if (t == 'w') {
+                ShaftTile(play, f, x, y);
+            } else {
                 Emit({ c.x - kHalf, y0, c.z + kHalf }, { c.x + kHalf, y0, c.z + kHalf },
-                     { c.x + kHalf, y1, c.z + kHalf }, { c.x - kHalf, y1, c.z + kHalf }, HuskTex::Wall, 1, 1.5f, false);
+                     { c.x + kHalf, y0, c.z - kHalf }, { c.x - kHalf, y0, c.z - kHalf }, Van::Moss, 4.0f, 2.0f, false);
             }
-            if (HuskTile(f, x - 1, y) == '#') {
-                Emit({ c.x - kHalf, y0, c.z - kHalf }, { c.x - kHalf, y0, c.z + kHalf },
-                     { c.x - kHalf, y1, c.z + kHalf }, { c.x - kHalf, y1, c.z - kHalf }, HuskTex::Wall, 1, 1.5f, false);
-            }
-            if (HuskTile(f, x + 1, y) == '#') {
-                Emit({ c.x + kHalf, y0, c.z + kHalf }, { c.x + kHalf, y0, c.z - kHalf },
-                     { c.x + kHalf, y1, c.z - kHalf }, { c.x + kHalf, y1, c.z + kHalf }, HuskTex::Wall, 1, 1.5f, false);
+            Emit({ c.x - kHalf, roof, c.z - kHalf }, { c.x + kHalf, roof, c.z - kHalf }, { c.x + kHalf, roof, c.z + kHalf },
+                 { c.x - kHalf, roof, c.z + kHalf }, space == HuskSpace::Hall ? Van::RoofDark : Van::Roof, 4.0f, 2.0f,
+                 false);
+            // Walls toward neighbouring wall blocks
+            static const int kDx[4] = { 0, 1, 0, -1 }, kDy[4] = { 1, 0, -1, 0 };
+            for (int side = 0; side < 4; side++) {
+                int nx = x + kDx[side], ny = y + kDy[side];
+                if (HuskTile(f, nx, ny) == '#') {
+                    WallFace(f, x, y, side, y0, roof);
+                } else {
+                    // A lower roof next door: close the step between the two roofs with bark
+                    f32 other = y0 + RoofOf(f, nx, ny);
+                    if (other < roof) {
+                        Vec3f m = { c.x + kDx[side] * kHalf, 0, c.z + kDy[side] * kHalf };
+                        f32 px = kDy[side] != 0 ? kHalf : 0.0f, pz = kDx[side] != 0 ? kHalf : 0.0f;
+                        Emit({ m.x - px, other, m.z - pz }, { m.x + px, other, m.z + pz }, { m.x + px, roof, m.z + pz },
+                             { m.x - px, roof, m.z - pz }, Van::Bark, 4.0f, (roof - other) / 80.0f, false);
+                        Emit({ m.x + px, other, m.z + pz }, { m.x - px, other, m.z - pz }, { m.x - px, roof, m.z - pz },
+                             { m.x + px, roof, m.z + pz }, Van::Bark, 4.0f, (roof - other) / 80.0f, false);
+                    }
+                }
             }
             // What stands on the tile
             switch (t) {
                 case 'T':
                 case 't':
-                    Box(c, 12.0f, 70.0f, HuskTex::Post, HuskTex::Post, 2.0f);
+                    // A root post with a fire bowl: the Deku Tree's bark, and the Husk's flame
+                    Box(c, 16.0f, 96.0f, Van::Bark, Van::RoofDark, 1.2f);
                     if (TorchLit(f, x, y)) {
-                        Billboard({ c.x, c.y + 66.0f, c.z }, 30.0f, 34.0f,
+                        Billboard({ c.x, c.y + 90.0f, c.z }, 44.0f, 52.0f,
                                   (play->gameplayFrames / 3) % 2 ? HuskTex::Flame0 : HuskTex::Flame1);
+                        sLights.push_back({ c.x, c.y + 110.0f, c.z });
                     }
                     break;
                 case 'H':
-                    Box(c, 18.0f, 64.0f, HuskTex::Stone, HuskTex::Stone, 1.0f);
+                    Box(c, 26.0f, 96.0f, HuskTex::Stone, HuskTex::Stone, 1.0f);
                     break;
                 case 'W':
                     if (!Has(sState.webs, f, x, y)) {
-                        Cross(f, x, y, HuskTex::Web, 0.0f, kWallH);
+                        Cross(f, x, y, Van::GreatWeb, 0.0f, roof - y0, kHalf, (roof - y0) / 160.0f);
+                        sQuads[sQuads.size() - 1].tint = sQuads[sQuads.size() - 2].tint = 0.6f;
                     }
                     break;
                 case 'G':
                     if (!Husk_GateOpen()) {
-                        Cross(f, x, y, HuskTex::Gate, 0.0f, kWallH);
+                        Cross(f, x, y, HuskTex::Gate, 0.0f, roof - y0);
                     }
                     break;
                 case 'C':
                 case 'k': {
                     bool open = Has(sState.chests, f, x, y);
-                    Box(c, 16.0f, 22.0f, HuskTex::Chest, open ? HuskTex::ChestOpen : HuskTex::Chest, 0.6f);
+                    Box(c, 24.0f, 32.0f, HuskTex::Chest, open ? HuskTex::ChestOpen : HuskTex::Chest, 0.6f);
                     break;
                 }
                 case 'X':
                     if (!Has(sState.sacs, f, x, y)) {
-                        Billboard(c, 70.0f, 70.0f, HuskTex::Sac);
+                        Billboard(c, 110.0f, 110.0f, HuskTex::Sac);
                     }
                     break;
                 case 'U':
-                    Cross(f, x, y, HuskTex::Vines, 0.0f, kWallH, 20.0f);
+                    Cross(f, x, y, Van::Ivy, 0.0f, roof - y0, 30.0f, (roof - y0) / 160.0f);
                     break;
                 case 'D':
-                    FloorDecal(f, x, y, HuskTex::Hole);
+                    FloorDecal(f, x, y, HuskTex::Hole, kHalf * 0.7f);
                     break;
                 case 'P':
                     if (HuskFloorOf(f).visiblePits || Has(sState.pitsFound, f, x, y)) {
-                        FloorDecal(f, x, y, HuskTex::Hole);
+                        FloorDecal(f, x, y, HuskTex::Hole, kHalf * 0.7f);
                     }
                     break;
                 case 'B':
-                    FloorDecal(f, x, y, HuskTex::Brambles);
+                    FloorDecal(f, x, y, HuskTex::Brambles, kHalf * 0.9f);
                     break;
                 case 'R':
-                    FloorDecal(f, x, y, HuskTex::Rot);
+                    FloorDecal(f, x, y, HuskTex::Rot, kHalf * 0.9f);
                     break;
                 case 'i':
-                    FloorDecal(f, x, y, HuskTex::Mark, 24.0f);
+                    FloorDecal(f, x, y, HuskTex::Mark, 30.0f);
                     break;
                 case 'A':
                     if (Has(sState.wiresFound, f, x, y)) {
-                        FloorDecal(f, x, y, HuskTex::Mark, 30.0f);
+                        FloorDecal(f, x, y, HuskTex::Mark, 40.0f);
                     }
                     break;
                 case 'S':
                 case 'Q':
-                    FloorDecal(f, x, y, HuskTex::Glow);
+                    FloorDecal(f, x, y, HuskTex::Glow, 50.0f);
                     break;
                 default:
                     break;
@@ -435,15 +585,28 @@ void BuildQuads(PlayState* play) {
     }
 }
 
-// Light: darker with distance, warmer near lit torches
-u8 Shade(const Vec3f& p) {
+// Light: the dark swallows everything a few tiles off; lit torches and a burning stick throw warm light
+void Shade(const Vec3f& p, u8 out[3]) {
     f32 dx = p.x - sEye.x, dy = p.y - sEye.y, dz = p.z - sEye.z;
     f32 d = sqrtf(dx * dx + dy * dy + dz * dz);
-    f32 b = std::clamp(1.15f - d / 480.0f, 0.06f, 1.0f);
-    return (u8)(b * 255.0f);
+    f32 base = std::clamp(1.1f - d / 1000.0f, 0.04f, 1.0f);
+    // the tree's own cast: a little green in the dark
+    f32 r = base * 0.86f, g = base * 0.92f, b = base * 0.74f;
+    for (const Vec3f& l : sLights) {
+        f32 lx = p.x - l.x, ly = p.y - l.y, lz = p.z - l.z;
+        f32 ld = sqrtf(lx * lx + ly * ly + lz * lz);
+        f32 k = std::clamp(1.0f - ld / 520.0f, 0.0f, 1.0f);
+        k *= k;
+        r += k * 0.75f;
+        g += k * 0.45f;
+        b += k * 0.15f;
+    }
+    out[0] = (u8)(std::min(r, 1.0f) * 255.0f);
+    out[1] = (u8)(std::min(g, 1.0f) * 255.0f);
+    out[2] = (u8)(std::min(b, 1.0f) * 255.0f);
 }
 
-void SetupMaterial(Gfx*& g, int tex, bool xlu) {
+void SetupMaterial(Gfx*& g, int tex, bool xlu, bool clampT) {
     gDPPipeSync(g++);
     gDPSetCycleType(g++, G_CYC_1CYCLE);
     if (xlu) {
@@ -456,49 +619,88 @@ void SetupMaterial(Gfx*& g, int tex, bool xlu) {
     gSPClearGeometryMode(g++, G_LIGHTING | G_FOG | G_CULL_BOTH | G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR);
     gSPSetGeometryMode(g++, G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH);
     gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
+    u32 cmt = clampT ? G_TX_CLAMP : G_TX_WRAP;
+    if (tex >= kVanBase) {
+        const Van::Info& v = Van::kInfo[tex - kVanBase];
+        if (v.fmt == G_IM_FMT_CI) {
+            gDPSetTextureLUT(g++, G_TT_RGBA16);
+            gDPLoadTLUT_pal256(g++, Van::kTlut);
+            gDPLoadTextureBlock(g++, v.path, G_IM_FMT_CI, G_IM_SIZ_8b, v.w, v.h, 0, G_TX_WRAP, cmt, v.maskS,
+                                v.maskT, G_TX_NOLOD, G_TX_NOLOD);
+        } else {
+            gDPSetTextureLUT(g++, G_TT_NONE);
+            gDPLoadTextureBlock(g++, v.path, v.fmt, G_IM_SIZ_16b, v.w, v.h, 0, G_TX_WRAP, cmt, v.maskS, v.maskT,
+                                G_TX_NOLOD, G_TX_NOLOD);
+        }
+        return;
+    }
+    gDPSetTextureLUT(g++, G_TT_NONE);
     gDPLoadTextureBlock(g++, HuskTex::kAll[tex], G_IM_FMT_RGBA, G_IM_SIZ_32b, HuskTex::kSize, HuskTex::kSize, 0,
                         G_TX_WRAP, G_TX_WRAP, 5, 5, G_TX_NOLOD, G_TX_NOLOD);
 }
 
+void TexSize(int tex, int& w, int& h) {
+    if (tex >= kVanBase) {
+        w = Van::kInfo[tex - kVanBase].w;
+        h = Van::kInfo[tex - kVanBase].h;
+    } else {
+        w = h = HuskTex::kSize;
+    }
+}
+
 void DrawQuads(PlayState* play, Gfx*& g, bool xlu) {
-    for (int tex = 0; tex < HuskTex::Count; tex++) {
-        std::vector<const Quad*> list;
-        for (const Quad& q : sQuads) {
-            if (q.tex == tex && q.xlu == xlu) {
-                list.push_back(&q);
-            }
-        }
-        if (list.empty()) {
-            continue;
-        }
-        SetupMaterial(g, tex, xlu);
-        for (size_t i = 0; i < list.size(); i += 8) {
-            size_t n = std::min<size_t>(8, list.size() - i);
-            Vtx* v = (Vtx*)Graph_Alloc(play->state.gfxCtx, sizeof(Vtx) * 4 * n);
-            for (size_t k = 0; k < n; k++) {
-                const Quad& q = *list[i + k];
-                for (int c = 0; c < 4; c++) {
-                    Vtx& o = v[k * 4 + c];
-                    u8 s = Shade(q.p[c]);
-                    o.v.ob[0] = (s16)lroundf(q.p[c].x);
-                    o.v.ob[1] = (s16)lroundf(q.p[c].y);
-                    o.v.ob[2] = (s16)lroundf(q.p[c].z);
-                    o.v.flag = 0;
-                    o.v.tc[0] = (s16)(q.s[c] * HuskTex::kSize * 32.0f);
-                    o.v.tc[1] = (s16)(q.t[c] * HuskTex::kSize * 32.0f);
-                    o.v.cn[0] = s;
-                    o.v.cn[1] = s;
-                    o.v.cn[2] = s;
-                    o.v.cn[3] = 255;
+    std::vector<int> texIds;
+    for (int t = 0; t < HuskTex::Count; t++) {
+        texIds.push_back(t);
+    }
+    for (int t = kVanBase; t < Van::End; t++) {
+        texIds.push_back(t);
+    }
+    for (int tex : texIds) {
+        for (int clampPass = 0; clampPass < 2; clampPass++) {
+            std::vector<const Quad*> list;
+            for (const Quad& q : sQuads) {
+                if (q.tex == tex && q.xlu == xlu && q.clampT == (clampPass == 1)) {
+                    list.push_back(&q);
                 }
             }
-            gSPVertex(g++, (uintptr_t)v, (u32)(n * 4), 0);
-            for (size_t k = 0; k < n; k++) {
-                u32 b = (u32)(k * 4);
-                gSP2Triangles(g++, b, b + 1, b + 2, 0, b, b + 2, b + 3, 0);
+            if (list.empty()) {
+                continue;
+            }
+            SetupMaterial(g, tex, xlu, clampPass == 1);
+            int tw, th;
+            TexSize(tex, tw, th);
+            for (size_t i = 0; i < list.size(); i += 8) {
+                size_t n = std::min<size_t>(8, list.size() - i);
+                Vtx* v = (Vtx*)Graph_Alloc(play->state.gfxCtx, sizeof(Vtx) * 4 * n);
+                for (size_t k = 0; k < n; k++) {
+                    const Quad& q = *list[i + k];
+                    for (int c = 0; c < 4; c++) {
+                        Vtx& o = v[k * 4 + c];
+                        u8 rgb[3];
+                        Shade(q.p[c], rgb);
+                        o.v.ob[0] = (s16)lroundf(q.p[c].x);
+                        o.v.ob[1] = (s16)lroundf(q.p[c].y);
+                        o.v.ob[2] = (s16)lroundf(q.p[c].z);
+                        o.v.flag = 0;
+                        o.v.tc[0] = (s16)(q.s[c] * tw * 32.0f);
+                        o.v.tc[1] = (s16)(q.t[c] * th * 32.0f);
+                        o.v.cn[0] = (u8)(rgb[0] * q.tint);
+                        o.v.cn[1] = (u8)(rgb[1] * q.tint);
+                        o.v.cn[2] = (u8)(rgb[2] * q.tint);
+                        o.v.cn[3] = 255;
+                    }
+                }
+                gSPVertex(g++, (uintptr_t)v, (u32)(n * 4), 0);
+                for (size_t k = 0; k < n; k++) {
+                    u32 b = (u32)(k * 4);
+                    gSP2Triangles(g++, b, b + 1, b + 2, 0, b, b + 2, b + 3, 0);
+                }
             }
         }
     }
+    gDPPipeSync(g++);
+    gDPSetTextureLUT(g++, G_TT_NONE);
 }
 
 // ---- The world actor ------------------------------------------------------------------------------------
@@ -641,10 +843,14 @@ extern "C" int Husk_HidesRooms(void) {
 }
 
 bool Husk_Active(PlayState* play) {
-    // Off by default since the Nov 1 playtest (too cramped, not OoT enough): the Deku Tree is crawled as itself.
-    // Kept behind a cvar while the "morph the real tree onto the grid" approach is worked out.
-    return play != NULL && ModOn() && CVarGetInteger(CVAR_ENHANCEMENT("Nocturne.HuskFloors"), 0) != 0 &&
+    // On again since the Etrian-style rebuild (Nov 1): the grid floors, dressed in the Deku Tree's own textures.
+    // Nocturne.HuskFloors 0 goes back to crawling the vanilla tree.
+    return play != NULL && ModOn() && CVarGetInteger(CVAR_ENHANCEMENT("Nocturne.HuskFloors"), 1) != 0 &&
            play->sceneNum == SCENE_DEKU_TREE;
+}
+
+float Husk_TileSize() {
+    return kTile;
 }
 
 int Husk_Floor() {
@@ -754,6 +960,17 @@ bool Husk_OnStepEnd(PlayState* play, Player* player) {
                 }
             }
             (void)any;
+            break;
+        }
+        case 'w': {
+            // Down through the burned Great Web, as in the old tree: a long drop, but soft roots below
+            HuskSpot to;
+            if (HuskLink(f, x, y, to)) {
+                Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
+                GoTo(play, player, to.floor, to.x, to.y, DungeonCrawler_GetFacing());
+                Say("The party drops through the hollow to " + std::string(HuskFloorOf(to.floor).name) + ".");
+                return true;
+            }
             break;
         }
         case 'P': {
@@ -880,6 +1097,26 @@ bool Husk_OnA(PlayState* play, Player* player, int facing) {
             Rebuild(play);
         } else {
             Say("A thick web blocks the way. Fire would burn it.");
+        }
+        return true;
+    }
+    if (ahead == 'w' && !Has(sState.webs, f, fx, fy)) {
+        if (sStick > 0) {
+            // The whole web goes up at once
+            const HuskFloor& fl = HuskFloorOf(f);
+            for (int wy = 0; wy < fl.Height(); wy++) {
+                for (int wx = 0; wx < fl.Width(); wx++) {
+                    if (HuskTile(f, wx, wy) == 'w') {
+                        sState.webs.insert({ f, wx, wy });
+                    }
+                }
+            }
+            Say("The Great Web goes up in flame! The hollow below lies open.", 0xF8B80000u);
+            Audio_PlaySfxGeneral(NA_SE_EV_FLAME_IGNITION, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
+                                 &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+            Rebuild(play);
+        } else {
+            Say("The Great Web, stretched across the hollow. Fire would burn it.");
         }
         return true;
     }
@@ -1020,7 +1257,7 @@ nlohmann::json Husk_Save() {
                          { "torches", SpotsToJson(sState.torches) }, { "read", SpotsToJson(sState.read) },
                          { "sacs", SpotsToJson(sState.sacs) },       { "elites", SpotsToJson(sState.elites) },
                          { "pits", SpotsToJson(sState.pitsFound) },  { "wires", SpotsToJson(sState.wiresFound) },
-                         { "stoneF3", sState.stoneF3 } };
+                         { "stoneF3", sState.stoneF3 }, { "layout", kLayoutVersion } };
     // A save made at a Sheikah Stone reloads beside it; any other save starts at the entrance
     if (sSavingAtStone) {
         j["loadAt"] = { sState.loadFloor, sState.loadX, sState.loadY };
@@ -1042,6 +1279,15 @@ void Husk_Load(const nlohmann::json& j) {
     SpotsFromJson(j, "pits", sState.pitsFound);
     SpotsFromJson(j, "wires", sState.wiresFound);
     sState.stoneF3 = j.value("stoneF3", false);
+    if (j.value("layout", 1) < kLayoutVersion) {
+        // F1 was rebuilt: what was opened or burned there was on the old grid
+        for (std::set<Spot>* set : { &sState.chests, &sState.webs, &sState.torches, &sState.read, &sState.pitsFound,
+                                     &sState.wiresFound }) {
+            for (auto it = set->begin(); it != set->end();) {
+                it = std::get<0>(*it) == 0 ? set->erase(it) : std::next(it);
+            }
+        }
+    }
     if (j.contains("loadAt") && j["loadAt"].is_array() && j["loadAt"].size() == 3) {
         sState.loadFloor = j["loadAt"][0].get<int>();
         sState.loadX = j["loadAt"][1].get<int>();

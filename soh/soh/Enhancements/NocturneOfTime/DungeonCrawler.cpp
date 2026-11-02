@@ -42,6 +42,7 @@ namespace {
 // ---- Tuning ---------------------------------------------------------------------------------------------
 constexpr f32 kTileSize = 80.0f;      // world units per grid step
 constexpr s16 kStepFrames = 6;        // game frames (20 per second) to walk one tile
+constexpr s16 kHuskStepFrames = 9;    // ...one of the Husk's tiles (twice as long)
 constexpr s16 kTurnFrames = 5;        // game frames to turn 90 degrees
 constexpr s16 kBumpFrames = 6;        // game frames for the "hit a wall" nudge
 constexpr f32 kBumpDistance = 6.0f;   // how far the view nudges into a wall
@@ -411,12 +412,13 @@ void UpdateAction(Player* player) {
 
         case Action::Step: {
             sCrawler.timer++;
-            f32 t = SmoothStep(CLAMP_MAX((f32)sCrawler.timer / kStepFrames, 1.0f));
+            s16 stepFrames = gPlayState != NULL && Husk_Active(gPlayState) ? kHuskStepFrames : kStepFrames;
+            f32 t = SmoothStep(CLAMP_MAX((f32)sCrawler.timer / stepFrames, 1.0f));
             player->actor.world.pos.x = sCrawler.from.x + (sCrawler.to.x - sCrawler.from.x) * t;
             player->actor.world.pos.z = sCrawler.from.z + (sCrawler.to.z - sCrawler.from.z) * t;
             s16 yawDiff = (s16)(sCrawler.stepYawTo - sCrawler.stepYawFrom);
             sCrawler.curYaw = (s16)(sCrawler.stepYawFrom + (s16)(yawDiff * t));
-            if (sCrawler.timer >= kStepFrames) {
+            if (sCrawler.timer >= stepFrames) {
                 FieldFire_OnStep();
                 sCrawler.curYaw = sCrawler.stepYawTo;
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);

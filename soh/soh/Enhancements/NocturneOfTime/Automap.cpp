@@ -15,6 +15,7 @@
 #include "DungeonCrawler.h"
 #include "Battle/BattleScene.h"
 #include "Boss/BossGate.h"
+#include "Dungeon/HuskDungeon.h"
 #include "soh/frame_interpolation.h"
 
 #include <math.h>
@@ -33,9 +34,14 @@ int16_t OTRGetRectDimensionFromRightEdge(float v);
 
 namespace {
 
-constexpr f32 kTileSize = 80.0f;    // must match the crawler's step
+constexpr f32 kCrawlTile = 80.0f;   // the crawler's step in vanilla rooms
+// The cell size: the crawler's step, or the Husk's bigger tiles there
+f32 TileSize() {
+    return gPlayState != NULL && Husk_Active(gPlayState) ? Husk_TileSize() : kCrawlTile;
+}
 constexpr f32 kFloorHeight = 120.0f; // vertical size of one map floor
-constexpr f32 kWallProbe = 44.0f;   // walls within this of the tile centre (half a tile + a little) count as that side's wall
+// walls within this of the tile centre (half a tile + a little) count as that side's wall
+#define kWallProbe (TileSize() * 0.55f)
 
 // Directions match the crawler's facing: 0 = +Z, 1 = +X, 2 = -Z, 3 = -X.
 struct Cell {
@@ -68,7 +74,7 @@ u32 sLastFrame = 0; // gameplay frame of the last update; a gap means a door, cu
 
 
 CellKey KeyFor(const Vec3f& pos) {
-    return { (s32)floorf(pos.x / kTileSize + 0.5f), (s32)floorf(pos.z / kTileSize + 0.5f),
+    return { (s32)floorf(pos.x / TileSize() + 0.5f), (s32)floorf(pos.z / TileSize() + 0.5f),
              (s32)floorf(pos.y / kFloorHeight + 0.5f) };
 }
 
@@ -248,7 +254,7 @@ void Automap_Update(PlayState* play, Player* player) {
 
     if (cells.find(key) == cells.end()) {
         // Scan from the tile centre so the result doesn't depend on where in the tile Link stands
-        Vec3f centre = { key.x * kTileSize, player->actor.world.pos.y, key.z * kTileSize };
+        Vec3f centre = { key.x * TileSize(), player->actor.world.pos.y, key.z * TileSize() };
         cells[key] = ScanCell(play, centre);
     }
 
