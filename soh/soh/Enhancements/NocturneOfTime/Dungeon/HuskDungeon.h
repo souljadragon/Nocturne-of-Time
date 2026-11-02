@@ -50,6 +50,9 @@ int Husk_StickSteps();
 bool Husk_GateOpen();
 bool Husk_GatePosition(float& x, float& y, float& z);
 
+// A (non-boss) battle is starting: Link moves to the battle chamber; Husk_OnBattleEnd brings him back
+void Husk_EnterBattleStage(PlayState* play, Player* player);
+
 // Battles tell the Husk how they ended (egg sacs, the elite), and how the boss fight went
 void Husk_OnBattleEnd(bool victory);
 void Husk_OnBossResult(bool won);

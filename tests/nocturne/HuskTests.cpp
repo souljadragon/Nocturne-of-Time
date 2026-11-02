@@ -40,7 +40,8 @@ int main() {
             for (int d = 0; d < 4; d++) {
                 int nx = x + dx[d], ny = y + dy[d];
                 char t = HuskTile(f, nx, ny);
-                if (HuskTileSolid(t) || seen.count({ nx, ny })) {
+                // chests stand on their tiles now (opened facing them); egg sacs can be torn open, so they don't block
+                if (HuskTileSolid(t) || t == 'C' || t == 'k' || seen.count({ nx, ny })) {
                     continue;
                 }
                 if (dy[d] < 0 && (t == 'v' || HuskTile(f, x, y) == 'v')) {
@@ -53,6 +54,16 @@ int main() {
         for (int y = 0; y < fl.Height(); y++) {
             for (int x = 0; x < fl.Width(); x++) {
                 char t = HuskTile(f, x, y);
+                if (t == 'C' || t == 'k' || t == 'X') {
+                    // reachable from a neighbouring tile
+                    bool near = seen.count({ x + 1, y }) || seen.count({ x - 1, y }) || seen.count({ x, y + 1 }) ||
+                                seen.count({ x, y - 1 });
+                    if (!near) {
+                        std::printf("  floor %d: (%d,%d) '%c' can't be reached from beside it\n", f, x, y, t);
+                    }
+                    CHECK(near);
+                    continue;
+                }
                 if (!HuskTileSolid(t) && t != 'W' && t != 'G' && !seen.count({ x, y })) {
                     std::printf("  floor %d: (%d,%d) '%c' unreachable\n", f, x, y, t);
                     CHECK(false);

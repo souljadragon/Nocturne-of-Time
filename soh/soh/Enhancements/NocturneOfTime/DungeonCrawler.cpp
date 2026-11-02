@@ -624,7 +624,12 @@ void Deactivate(Player* player) {
 
 void ClearMovementInput(Input* input) {
     // B too: Link doesn't swing his sword while crawling; fights are Press Turn battles
-    const u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L | BTN_R | BTN_B;
+    // C-Up too: OoT's first-person look would take the screen from the crawler. In the Husk all the C buttons:
+    // OoT's items have no use on its floors (its Deku Sticks are Nocturne items)
+    u16 kEatenButtons = BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT | BTN_Z | BTN_L | BTN_R | BTN_B | BTN_CUP;
+    if (gPlayState != NULL && Husk_Active(gPlayState)) {
+        kEatenButtons |= BTN_CLEFT | BTN_CDOWN | BTN_CRIGHT;
+    }
     for (OSContPad* pad : { &input->cur, &input->press, &input->rel }) {
         pad->stick_x = 0;
         pad->stick_y = 0;

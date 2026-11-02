@@ -36,7 +36,8 @@ struct HuskFloor {
 const HuskFloor& HuskFloorOf(int floor);
 // The tile at (x, y); '#' outside the grid
 char HuskTile(int floor, int x, int y);
-// Tiles that block a step whatever the state (walls, torches, stones); webs and the gate block until opened
+// Tiles that block a step whatever the state (walls, torches, stones, water); webs and the gate block until
+// opened
 bool HuskTileSolid(char tile);
 // The space a tile is in
 HuskSpace HuskSpaceAt(int floor, int x, int y);

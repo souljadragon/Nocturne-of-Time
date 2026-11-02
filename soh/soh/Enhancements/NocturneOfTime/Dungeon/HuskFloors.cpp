@@ -45,9 +45,9 @@ std::vector<HuskFloor> Build() {
               "###.#.A.##.####B##.##",
               "###.######i####B##.##",
               "#C...###H....##B##.##",
-              "#....###.....##B##.##",
+              "#....###.~~~.##B##.##",
               "#.L.E.....U........##",
-              "#....###.....##t#####",
+              "#....###.~~~.##t#####",
               "#k...###.....########",
               "##########.##########",
               "##########.##########",
@@ -125,7 +125,7 @@ char HuskTile(int floor, int x, int y) {
 }
 
 bool HuskTileSolid(char tile) {
-    return tile == '#' || tile == 'T' || tile == 't' || tile == 'H';
+    return tile == '#' || tile == 'T' || tile == 't' || tile == 'H' || tile == '~';
 }
 
 HuskSpace HuskSpaceAt(int floor, int x, int y) {

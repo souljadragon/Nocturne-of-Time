@@ -213,6 +213,9 @@ void BeginBossIntro(PlayState* play);
 
 void StartBattle(PlayState* play, Player* player, std::vector<Combatant> enemies, bool boss) {
     EnsureParty();
+    if (!boss) {
+        Husk_EnterBattleStage(play, player); // in the Husk, fights happen in a chamber of their own
+    }
     sScene.boss = boss;
     sScene.autoBattle = false;
     BattleEnemyActor_SetFast(false);
