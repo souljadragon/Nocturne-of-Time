@@ -8,6 +8,8 @@
 //   up / down       step forward / back one tile
 //   left / right    turn 90 degrees
 //   Z + left/right  strafe one tile
+//   forward at a gap   jumps it when there's floor 2-3 tiles on (Z + forward drops down instead)
+//   forward at a drop  climbs down to the floor below (ladders, vines, ledges)
 //   right stick     look up / down (springs back)
 //   A, B, items     unchanged (open doors, talk, swing sword...)
 
@@ -94,6 +96,9 @@ struct CrawlerState {
     s8 lastRoom = -1;        // the room the grid was last lined up for
     Vec3f climbFrom = { 0.0f, 0.0f, 0.0f }; // a climb (or a drop): from here up/down, then onto `to`
     f32 climbRise = 0.0f;
+    bool jumping = false;   // an auto-jump across a gap (an arc, not a climb)
+    bool faceWall = false;  // after climbing: look straight on from the wall that was climbed
+    s16 wallYaw = 0;        // ...which faces this way (Link's direction while climbing it)
 };
 
 CrawlerState sCrawler;
@@ -239,6 +244,8 @@ bool FindClimbTop(PlayState* play, const Vec3f& from, const Vec3f& dir, f32 wall
 }
 
 void StartClimb(Player* player, const Vec3f& to) {
+    sCrawler.jumping = false;
+    sCrawler.faceWall = false;
     sCrawler.action = Action::Climb;
     sCrawler.timer = 0;
     sCrawler.climbFrom = player->actor.world.pos;
@@ -264,7 +271,42 @@ s16 RoomGridYaw(PlayState* play, s8 room, bool& known) {
     return 0;
 }
 
-void StartStep(PlayState* play, Player* player, s8 dirFacing) {
+void StartJump(Player* player, const Vec3f& to) {
+    StartClimb(player, to);
+    sCrawler.jumping = true;
+    Player_PlaySfx(&player->actor, NA_SE_VO_LI_AUTO_JUMP);
+}
+
+// Is there water at (x, z) above floor height y?
+bool WaterAt(PlayState* play, f32 x, f32 z, f32 y) {
+    f32 surface;
+    WaterBox* box;
+    return WaterBox_GetSurfaceImpl(play, &play->colCtx, x, z, &surface, &box) && surface > y + 5.0f;
+}
+
+// A gap ahead: the first floor within reach on the far side at about Link's height (the tile or two after the
+// one in front). Its centre, or false if there isn't one.
+bool FindJumpLanding(PlayState* play, const Vec3f& from, const Vec3f& dir, Vec3f& landing) {
+    for (int tiles = 2; tiles <= 3; tiles++) {
+        Vec3f to = { from.x + dir.x * kTileSize * tiles, from.y, from.z + dir.z * kTileSize * tiles };
+        f32 y = FloorAt(play, from, to);
+        if (y <= BGCHECK_Y_MIN + 1.0f || y > from.y + kMaxStepUp || y < from.y - 40.0f) {
+            continue;
+        }
+        // Nothing in the way at chest height
+        Vec3f a = { from.x, from.y + 45.0f, from.z }, b = { to.x, y + 45.0f, to.z }, hit;
+        CollisionPoly* poly;
+        s32 bgId;
+        if (BgCheck_EntityLineTest1(&play->colCtx, &a, &b, &hit, &poly, true, false, false, true, &bgId)) {
+            return false;
+        }
+        landing = { to.x, y, to.z };
+        return true;
+    }
+    return false;
+}
+
+void StartStep(PlayState* play, Player* player, s8 dirFacing, bool dropDown = false) {
     bool forward = ((dirFacing - sCrawler.facing) & 3) == 0;
     s16 gridYaw = FacingToYaw(sCrawler.facing);
     Vec3f dir = YawToDir(FacingToYaw(dirFacing));
@@ -292,6 +334,12 @@ void StartStep(PlayState* play, Player* player, s8 dirFacing) {
             Vec3f top;
             if (FindClimbTop(play, from, dir, wall.dist, top)) {
                 StartClimb(player, top);
+                if (wall.poly != NULL) {
+                    // Afterwards, look straight on from the wall (a ladder on a slanted wall of the round lobby)
+                    sCrawler.faceWall = true;
+                    sCrawler.wallYaw = Math_Atan2S(-COLPOLY_GET_NORMAL(wall.poly->normal.z),
+                                                   -COLPOLY_GET_NORMAL(wall.poly->normal.x));
+                }
             } else {
                 StartAssist();
             }
@@ -321,21 +369,29 @@ void StartStep(PlayState* play, Player* player, s8 dirFacing) {
     }
 
     f32 floorY = FloorAt(play, from, to);
+    bool gap = floorY <= BGCHECK_Y_MIN + 1.0f || floorY < from.y - kDropAssist;
+    // A gap with floor on the far side: jump it (Z + forward drops down instead)
+    if (forward && gap && !dropDown) {
+        Vec3f landing;
+        if (FindJumpLanding(play, from, dir, landing)) {
+            StartJump(player, landing);
+            return;
+        }
+    }
     if (floorY <= BGCHECK_Y_MIN + 1.0f || floorY > from.y + kMaxStepUp) {
         // Void, or a ledge too tall to step onto
         StartBump(player, dir);
         return;
     }
     if (forward && floorY < from.y - kDropAssist) {
-        // A real drop. Onto a web the game's own fall is needed (a long fall breaks it); anywhere else Link
-        // climbs down to the floor below in one move
+        // A real drop (ladders and vines down included): Link climbs down to the floor below in one move. Onto a
+        // web the game's own fall is needed (a long fall breaks it), and into water the game's own swimming.
         CollisionPoly* poly;
         s32 bgId;
         Vec3f probe = { to.x, from.y + 5.0f, to.z };
         f32 below = BgCheck_EntityRaycastFloor3(&play->colCtx, &poly, &bgId, &probe);
         DynaPolyActor* onto = bgId != BGCHECK_SCENE ? DynaPoly_GetActor(&play->colCtx, bgId) : NULL;
-        bool water = player->actor.yDistToWater > 0.0f;
-        if (below <= BGCHECK_Y_MIN + 1.0f || (onto != NULL && onto->actor.id == ACTOR_BG_YDAN_SP) || water) {
+        if ((onto != NULL && onto->actor.id == ACTOR_BG_YDAN_SP) || WaterAt(play, to.x, to.z, below)) {
             StartAssist();
         } else {
             StartClimb(player, { to.x, below, to.z });
@@ -413,14 +469,31 @@ void UpdateAction(Player* player) {
                 over = SmoothStep(CLAMP_MAX(t / 0.4f, 1.0f));
                 rise = SmoothStep(CLAMP((t - 0.3f) / 0.7f, 0.0f, 1.0f));
             }
+            f32 arc = 0.0f;
+            if (sCrawler.jumping) { // a leap: straight across, with a hop
+                over = t;
+                rise = t;
+                arc = sinf(t * kPi) * 40.0f;
+            }
             player->actor.world.pos.x = sCrawler.climbFrom.x + (sCrawler.to.x - sCrawler.climbFrom.x) * over;
             player->actor.world.pos.z = sCrawler.climbFrom.z + (sCrawler.to.z - sCrawler.climbFrom.z) * over;
-            player->actor.world.pos.y = sCrawler.climbFrom.y + sCrawler.climbRise * rise;
+            player->actor.world.pos.y = sCrawler.climbFrom.y + sCrawler.climbRise * rise + arc;
             player->actor.velocity.y = 0.0f;
             if (sCrawler.timer >= kClimbFrames) {
                 player->actor.world.pos = sCrawler.to;
                 sCrawler.action = Action::None;
-                sCrawler.needCentre = true; // a new level: line the grid up again
+                sCrawler.jumping = false;
+                if (sCrawler.faceWall) {
+                    // Off a ladder or vines: the grid turns to the wall that was climbed, so the view looks straight
+                    // ahead instead of off at an angle
+                    sCrawler.faceWall = false;
+                    sCrawler.gridYaw = (s16)(sCrawler.wallYaw - (s16)(sCrawler.facing * 0x4000));
+                    sCrawler.gridOrigin = { sCrawler.to.x, 0.0f, sCrawler.to.z };
+                    sCrawler.curYaw = FacingToYaw(sCrawler.facing);
+                    sCrawler.lastRoom = gPlayState != NULL ? gPlayState->roomCtx.curRoom.num : -1;
+                } else {
+                    sCrawler.needCentre = true; // a new level: line the grid up again
+                }
                 Player_PlaySfx(&player->actor, NA_SE_PL_WALK_GROUND + player->floorSfxOffset);
             }
             break;
@@ -675,7 +748,7 @@ bool OnFilterInput(Player* player, Input* input) {
     if (sCrawler.action == Action::None && !airborne) {
         // Facing + 1 is a quarter turn to the left (yaw grows counter-clockwise seen from above)
         if (up) {
-            StartStep(play, player, sCrawler.facing);
+            StartStep(play, player, sCrawler.facing, strafe); // Z + forward: drop down a gap instead of jumping
         } else if (down) {
             StartStep(play, player, sCrawler.facing + 2);
         } else if (left && strafe) {
