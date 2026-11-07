@@ -12,6 +12,15 @@
 
 #include <math.h>
 
+// Matrix_SetTranslateRotateYXZ with a plain yaw (no compound literals: MSVC's C compiler)
+static void PlaceAt(f32 x, f32 y, f32 z, s16 yaw) {
+    Vec3s rot;
+    rot.x = 0;
+    rot.y = yaw;
+    rot.z = 0;
+    Matrix_SetTranslateRotateYXZ(x, y, z, &rot);
+}
+
 // ---- Chests: the treasure chest's own skeleton, posed closed, open, or opening -------------------------------
 // (sizes measured from the models: the chest is 50 wide at its usual 0.01 scale; the wooden torch 58 tall at 1.0;
 // the wall web 2800 x 2888 and the floor web 2400 across in model units; the Gossip Stone 415 tall; the egg 2854)
@@ -100,7 +109,7 @@ void HuskProps_Chest(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 scale, s
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Push();
     // The chest's front (its lock) faces local -z, so turn it round to face `yaw`
-    Matrix_SetTranslateRotateYXZ(x, y, z, &(Vec3s){ 0, (s16)(yaw + 0x8000), 0 });
+    PlaceAt(x, y, z, (s16)(yaw + 0x8000));
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     CLOSE_DISPS(play->state.gfxCtx);
     SkelAnime_DrawOpa(play, pose->skel.skeleton, pose->skel.jointTable, NULL, ChestPostLimbDraw, NULL);
@@ -112,7 +121,7 @@ void HuskProps_Torch(PlayState* play, f32 x, f32 y, f32 z, f32 scale, s32 lit) {
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Push();
-    Matrix_SetTranslateRotateYXZ(x, y, z, &(Vec3s){ 0, 0, 0 });
+    PlaceAt(x, y, z, 0);
     Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, gWoodenTorchDL);
@@ -125,7 +134,7 @@ void HuskProps_Torch(PlayState* play, f32 x, f32 y, f32 z, f32 scale, s32 lit) {
         gDPSetPrimColor(POLY_XLU_DISP++, 0x80, 0x80, 255, 255, 0, 255);
         gDPSetEnvColor(POLY_XLU_DISP++, 255, 0, 0, 0);
         Matrix_Translate(0.0f, 52.0f, 0.0f, MTXMODE_APPLY);
-        Matrix_RotateY((s16)(Camera_GetCamDirYaw(GET_ACTIVE_CAM(play)) + 0x8000) * (M_PI / 0x8000), MTXMODE_APPLY);
+        Matrix_RotateY((s16)(Camera_GetCamDirYaw(GET_ACTIVE_CAM(play)) + 0x8000) * (3.14159265f / 32768.0f), MTXMODE_APPLY);
         Matrix_Scale(0.0027f, 0.0027f, 0.0027f, MTXMODE_APPLY);
         gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
         gSPDisplayList(POLY_XLU_DISP++, gEffFire1DL);
@@ -139,7 +148,7 @@ void HuskProps_WallWeb(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 width,
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Xlu(play->state.gfxCtx);
     Matrix_Push();
-    Matrix_SetTranslateRotateYXZ(x, y, z, &(Vec3s){ 0, yaw, 0 });
+    PlaceAt(x, y, z, yaw);
     Matrix_Scale(width / 2800.0f, height / 2888.0f, 1.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_XLU_DISP++, gDTWebWallDL);
@@ -152,7 +161,7 @@ void HuskProps_FloorWeb(PlayState* play, f32 x, f32 y, f32 z, f32 width) {
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Xlu(play->state.gfxCtx);
     Matrix_Push();
-    Matrix_SetTranslateRotateYXZ(x, y, z, &(Vec3s){ 0, 0, 0 });
+    PlaceAt(x, y, z, 0);
     Matrix_Scale(s, s, s, MTXMODE_APPLY);
     gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_XLU_DISP++, gDTWebFloorDL);
@@ -166,7 +175,7 @@ void HuskProps_SheikahStone(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 h
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Push();
-    Matrix_SetTranslateRotateYXZ(x, y + 286.0f * s, z, &(Vec3s){ 0, yaw, 0 });
+    PlaceAt(x, y + 286.0f * s, z, yaw);
     Matrix_Scale(s, s, s, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, gGossipStoneMaterialDL);
@@ -186,7 +195,7 @@ void HuskProps_EggSac(PlayState* play, f32 x, f32 y, f32 z, f32 size) {
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     gSPSegment(POLY_OPA_DISP++, 0x08, Gfx_TexScroll(play->state.gfxCtx, 0, scroll, 0, 0));
     Matrix_Push();
-    Matrix_SetTranslateRotateYXZ(x, y + size * 0.5f * (1.0f + breath), z, &(Vec3s){ 0, (s16)(frames * 40), 0 });
+    PlaceAt(x, y + size * 0.5f * (1.0f + breath), z, (s16)(frames * 40));
     Matrix_Scale(s * (1.0f - breath), s * (1.0f + breath), s * (1.0f - breath), MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, gObjectGolEggDL);
