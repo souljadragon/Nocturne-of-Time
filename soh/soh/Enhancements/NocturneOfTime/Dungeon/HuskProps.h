@@ -21,7 +21,7 @@ void HuskProps_Reset(void);
 void HuskProps_Torch(PlayState* play, f32 x, f32 y, f32 z, f32 scale, s32 lit);
 void HuskProps_WallWeb(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 width, f32 height);
 void HuskProps_FloorWeb(PlayState* play, f32 x, f32 y, f32 z, f32 width);
-void HuskProps_SheikahStone(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 height);
+void HuskProps_SheikahStone(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 scale);
 void HuskProps_EggSac(PlayState* play, f32 x, f32 y, f32 z, f32 size);
 void HuskProps_Chest(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 scale, s32 open);
 

@@ -152,6 +152,10 @@ void HuskProps_WallWeb(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 width,
     Matrix_Scale(width / 2800.0f, height / 2888.0f, 1.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_XLU_DISP++, (Gfx*)gDTWebWallDL);
+    // The tree's wall web is one-sided (OoT only shows it from one side): draw its back too
+    Matrix_RotateY(3.14159265f, MTXMODE_APPLY);
+    gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+    gSPDisplayList(POLY_XLU_DISP++, (Gfx*)gDTWebWallDL);
     Matrix_Pop();
     CLOSE_DISPS(play->state.gfxCtx);
 }
@@ -170,12 +174,12 @@ void HuskProps_FloorWeb(PlayState* play, f32 x, f32 y, f32 z, f32 width) {
 }
 
 // ---- Sheikah Stones: OoT's Gossip Stone, which already bears the Sheikah eye ----------------------------------
-void HuskProps_SheikahStone(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 height) {
-    f32 s = height / 415.0f;
+void HuskProps_SheikahStone(PlayState* play, f32 x, f32 y, f32 z, s16 yaw, f32 scale) {
+    f32 s = scale;
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Push();
-    PlaceAt(x, y + 286.0f * s, z, yaw);
+    PlaceAt(x, y, z, yaw); // OoT draws the stone from its base, as EnGs does
     Matrix_Scale(s, s, s, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
     gSPDisplayList(POLY_OPA_DISP++, (Gfx*)gGossipStoneMaterialDL);

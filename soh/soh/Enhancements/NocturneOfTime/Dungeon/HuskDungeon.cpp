@@ -700,7 +700,7 @@ void BuildQuads(PlayState* play) {
                     break;
                 }
                 case 'H':
-                    sProps.push_back({ Prop::Stone, c, FaceOpen(f, x, y), 120.0f, 0, false });
+                    sProps.push_back({ Prop::Stone, c, FaceOpen(f, x, y), 0.15f, 0, false }); // 1.5x OoT's own
                     break;
                 case 'W':
                     if (!Has(sState.webs, f, x, y)) {
